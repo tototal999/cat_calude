@@ -109,7 +109,6 @@ SPEED_TABLE = [
     (95, 80),     # sprint
     (100, None),  # exhausted: cat freezes
 ]
-SLEEP_INTERVAL = 700  # ms per sleep-cycle frame (only matters if a skin has 2+)
 # ---------------------------------------------------------------------------
 
 
@@ -235,11 +234,12 @@ class ClaudeCat:
         self._save_config()
 
     def _render_cat(self) -> None:
-        self.idle_buffer, self.frame_buffers, self.sleep_frames = spritecat.load_sprite_frames(
+        (self.idle_buffer, self.frame_buffers, self.sleep_frames,
+         self.error_frames) = spritecat.load_sprite_frames(
             self.cat_size.get(),
             facing='right' if self.facing_right.get() else 'left',
             skin=self.current_skin.get())
-        self._sleep_frame_idx = 0
+        self._error_frame_idx = 0
 
     def _apply_look(self) -> None:
         """Re-render after a size/direction change from the menu."""
@@ -390,14 +390,21 @@ class ClaudeCat:
     # ---- Animation loop ---------------------------------------------------
 
     def _should_sleep(self) -> bool:
-        """Sleep pose wins over the run cycle when the skin has one and
-        either Claude isn't reachable (no usage data / error) or the
-        session quota is fully used up."""
+        """Sleep pose wins over the run cycle when the skin has one and the
+        session quota is fully used up (100%). Errors / no data yet still
+        play the normal gentle-default animation - sleep means 'quota is
+        exhausted', not 'can't currently tell what the quota is'."""
         if not self.sleep_frames:
             return False
-        error = self._effective_error()
         usage = self._effective_usage()
-        return bool(error) or usage is None or usage >= 100
+        return usage is not None and usage >= 100
+
+    def _should_show_error_pose(self) -> bool:
+        """Error pose (if the skin has one) replaces the gentle default
+        animation when there's an error, or no usage data has come in yet."""
+        if not self.error_frames:
+            return False
+        return bool(self._effective_error()) or self._effective_usage() is None
 
     def _frame_interval(self) -> int | None:
         """Map current usage % to a frame interval (ms), or None if frozen."""
@@ -413,9 +420,15 @@ class ClaudeCat:
     def _animate(self) -> None:
         self._update_badge()
         if self._should_sleep():
-            self._sleep_frame_idx = (self._sleep_frame_idx + 1) % len(self.sleep_frames)
-            self.canvas.draw(self.sleep_frames[self._sleep_frame_idx])
-            self.root.after(SLEEP_INTERVAL, self._animate)
+            # Static, not animated: one sleep frame (the first, by filename
+            # sort - e.g. cowcat_sleep_07.png) is enough.
+            self.canvas.draw(self.sleep_frames[0])
+            self.root.after(500, self._animate)
+            return
+        if self._should_show_error_pose():
+            self._error_frame_idx = (self._error_frame_idx + 1) % len(self.error_frames)
+            self.canvas.draw(self.error_frames[self._error_frame_idx])
+            self.root.after(500, self._animate)
             return
         interval = self._frame_interval()
         if interval is None:

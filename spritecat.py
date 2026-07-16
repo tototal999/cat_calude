@@ -6,12 +6,12 @@ Loads all *.png from a skin folder under skins/, removes white background
 (makes it transparent), resizes to the requested square canvas, and outputs
 premultiplied BGRA buffers for winalpha.LayeredCanvas.draw().
 
-Skin pack structure:
+Skin pack structure - {skin}_{action}_{order}.png, see _collect_pngs:
     skins/
-      bluecat/
-        01.png, 02.png, ...
-      blackcat/
-        cat_0.png, cat_1.png, ...
+      cowcat/
+        cowcat_run_01.png, cowcat_run_02.png, ...
+        cowcat_sleep_01.png, ...
+        cowcat_error_01.png, ...
 """
 from __future__ import annotations
 
@@ -83,30 +83,35 @@ def _pick_one(pngs: list[Path], marker: str) -> Path | None:
     return matches[0] if matches else None
 
 
-def _collect_pngs(skin_dir: Path) -> tuple[list[Path], list[Path], Path | None]:
-    """Collect run-cycle PNGs plus optional sleep/idle special-pose PNGs.
+def _collect_pngs(skin_dir: Path) -> tuple[list[Path], list[Path], Path | None, list[Path]]:
+    """Collect run-cycle PNGs plus optional sleep/idle/error special-pose PNGs.
 
-    Filenames containing "sleep" (any case, e.g. "cowcat_sleep_07.png") are
-    the sleep pose - one or more frames, cycled like a mini run-cycle so a
-    multi-frame sleep (e.g. a breathing loop) animates instead of freezing
-    on a single image. A filename containing "_09" is the dedicated
-    standby/idle pose (e.g. ragdollcat's ragdollcat_09.png). Both kinds are
-    excluded from the main run cycle. If a marker isn't present in the
-    skin, that special pose is simply empty/None and callers fall back to
-    their default (e.g. run_frames[0] as idle, no sleep pose at all).
+    Naming convention: {skin}_{action}_{order}.png, e.g. "cowcat_run_01.png",
+    "cowcat_sleep_01.png", "cowcat_error_01.png". The action word is matched
+    as a case-insensitive substring:
+      - "sleep" -> sleep pose (one or more frames, cycled like a mini run-cycle)
+      - "error" -> error pose (same, cycled)
+      - "idle"  -> the dedicated standby pose (single frame)
+    Anything not matching one of those is a run-cycle frame (so "run" isn't
+    a strictly required marker, but is the documented convention). If a
+    marker isn't present in the skin, that special pose is simply
+    empty/None and callers fall back to their default (e.g. run_frames[0]
+    as idle, plain default animation with no error pose).
     """
     all_pngs = sorted(skin_dir.glob('*.png'))
     if not all_pngs:
         raise FileNotFoundError(f'No PNG files found in {skin_dir}')
     sleep_paths = _pick_all(all_pngs, 'sleep')
-    idle_path = _pick_one(all_pngs, '_09')
-    special = set(sleep_paths) | ({idle_path} if idle_path else set())
+    error_paths = _pick_all(all_pngs, 'error')
+    non_special = [p for p in all_pngs if p not in sleep_paths and p not in error_paths]
+    idle_path = _pick_one(non_special, 'idle')
+    special = set(sleep_paths) | set(error_paths) | ({idle_path} if idle_path else set())
     frame_paths = [p for p in all_pngs if p not in special]
     if not frame_paths:
         # The special-pose file(s) were the only PNGs - use them as normal
         # frames too rather than leaving the skin with no run cycle.
-        return all_pngs, [], None
-    return frame_paths, sleep_paths, idle_path
+        return all_pngs, [], None, []
+    return frame_paths, sleep_paths, idle_path, error_paths
 
 
 def _remove_white_bg(img: Image.Image, threshold: int = WHITE_THRESHOLD) -> Image.Image:
@@ -164,23 +169,25 @@ def _load_one(path: Path, size: int, facing: str) -> bytes:
 
 
 def load_sprite_frames(size: int, facing: str = 'left', skin: str = DEFAULT_SKIN,
-                       ) -> tuple[bytes, list[bytes], list[bytes]]:
+                       ) -> tuple[bytes, list[bytes], list[bytes], list[bytes]]:
     """Load sprite PNG files from a skin folder.
 
     size:   canvas width/height in px
     facing: 'left' or 'right'
     skin:   skin name (subdirectory under skins/)
 
-    Returns (idle_frame, run_frames, sleep_frames). idle_frame is the
-    skin's dedicated "_09" standby pose if it has one, else run_frames[0].
-    sleep_frames is a (possibly multi-frame) cycle for the skin's "sleep"
-    marked PNGs, or an empty list if the skin has none.
+    Returns (idle_frame, run_frames, sleep_frames, error_frames). idle_frame
+    is the skin's dedicated "_09" standby pose if it has one, else
+    run_frames[0]. sleep_frames/error_frames are each a (possibly
+    multi-frame) cycle for the skin's "sleep"/"error" marked PNGs, or an
+    empty list if the skin has none.
     """
     skin_dir = _get_skin_dir(skin)
-    frame_paths, sleep_paths, idle_path = _collect_pngs(skin_dir)
+    frame_paths, sleep_paths, idle_path, error_paths = _collect_pngs(skin_dir)
 
     frames_bgra = [_load_one(p, size, facing) for p in frame_paths]
     sleep_bgra = [_load_one(p, size, facing) for p in sleep_paths]
+    error_bgra = [_load_one(p, size, facing) for p in error_paths]
     idle_bgra = _load_one(idle_path, size, facing) if idle_path else frames_bgra[0]
 
-    return idle_bgra, frames_bgra, sleep_bgra
+    return idle_bgra, frames_bgra, sleep_bgra, error_bgra
