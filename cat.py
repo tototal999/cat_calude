@@ -38,6 +38,7 @@ POLL_INTERVAL = 180          # seconds; do NOT go lower (endpoint 429s hard)
 QUOTA_FIELD = 'five_hour'    # which quota drives the cat (session usage)
 CAT_SIZE = 128               # startup size px; changeable from the right-click menu
 SIZE_CHOICES = (64, 96, 128, 160, 192, 256)   # right-click menu size options
+POLL_CHOICES = (60, 180, 300)                  # right-click menu poll interval options (seconds)
 
 # usage % (upper bound, inclusive) -> frame interval in ms; None = frozen
 SPEED_TABLE = [
@@ -61,6 +62,8 @@ class ClaudeCat:
         self.show_pct = tk.BooleanVar(value=True)
         self.cat_size = tk.IntVar(value=CAT_SIZE)
         self.facing_right = tk.BooleanVar(value=False)
+        self.poll_interval = tk.IntVar(value=POLL_INTERVAL)
+        self.current_skin = tk.StringVar(value=spritecat.DEFAULT_SKIN)
 
         self.w = self.h = CAT_SIZE
         self._render_cat()
@@ -125,7 +128,8 @@ class ClaudeCat:
     def _render_cat(self) -> None:
         self.idle_buffer, self.frame_buffers = spritecat.load_sprite_frames(
             self.cat_size.get(),
-            facing='right' if self.facing_right.get() else 'left')
+            facing='right' if self.facing_right.get() else 'left',
+            skin=self.current_skin.get())
 
     def _apply_look(self) -> None:
         """Re-render after a size/direction change from the menu."""
@@ -154,6 +158,16 @@ class ClaudeCat:
             size_menu.add_radiobutton(label=f'{s} px', variable=self.cat_size,
                                       value=s, command=self._apply_look)
         m.add_cascade(label='Size', menu=size_menu)
+        poll_menu = tk.Menu(m, tearoff=0)
+        for s in POLL_CHOICES:
+            poll_menu.add_radiobutton(label=f'{s} sec', variable=self.poll_interval,
+                                      value=s)
+        m.add_cascade(label='Refresh', menu=poll_menu)
+        skin_menu = tk.Menu(m, tearoff=0)
+        for name in spritecat.list_skins():
+            skin_menu.add_radiobutton(label=name, variable=self.current_skin,
+                                      value=name, command=self._apply_look)
+        m.add_cascade(label='Skin', menu=skin_menu)
         m.add_checkbutton(label='Face right', variable=self.facing_right,
                           command=self._apply_look)
         m.add_separator()
@@ -246,19 +260,19 @@ class ClaudeCat:
                 self._try_refresh_token()
             if data.get('rate_limited'):
                 # Back off beyond Retry-After; this endpoint punishes eagerness
-                return max(data.get('retry_after', 0), POLL_INTERVAL * 2)
-            return POLL_INTERVAL
+                return max(data.get('retry_after', 0), self.poll_interval.get() * 2)
+            return self.poll_interval.get()
 
         quota = data.get(QUOTA_FIELD)
         if not isinstance(quota, dict) or quota.get('utilization') is None:
             self.error = f'Quota field "{QUOTA_FIELD}" missing in API response'
             print(f'[claude-cat] {self.error}. Fields: {list(data)}', file=sys.stderr)
-            return POLL_INTERVAL
+            return self.poll_interval.get()
 
         self.error = None
         self.usage_pct = float(quota['utilization'])
         self.resets_at = quota.get('resets_at')
-        return POLL_INTERVAL
+        return self.poll_interval.get()
 
     def _try_refresh_token(self) -> None:
         """On auth expiry, run `claude update` once to refresh the token

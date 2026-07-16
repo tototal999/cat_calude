@@ -2,24 +2,84 @@
 Sprite-based cat frames from PNG images (replaces vectorcat for photo cats).
 ============================================================================
 
-Loads bluecat01..06.png from the frames/ directory, removes white background
+Loads all *.png from a skin folder under skins/, removes white background
 (makes it transparent), resizes to the requested square canvas, and outputs
 premultiplied BGRA buffers for winalpha.LayeredCanvas.draw().
+
+Skin pack structure:
+    skins/
+      bluecat/
+        01.png, 02.png, ...
+      blackcat/
+        cat_0.png, cat_1.png, ...
 """
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 from PIL import Image
-import struct
+
+# Support PyInstaller bundled exe: images are extracted to sys._MEIPASS
+_BASE_DIR = Path(getattr(sys, '_MEIPASS', Path(__file__).parent))
+
+# Legacy fallback: if skins/ doesn't exist, try frames/
+LEGACY_FRAMES_DIR = _BASE_DIR / 'frames'
 
 
-FRAMES_DIR = Path(__file__).parent / 'frames'
-SPRITE_PATTERN = 'bluecat{:02d}.png'
-SPRITE_COUNT = 6
+def _skin_roots() -> list[Path]:
+    """Skin root directories in priority order.
+
+    For a frozen exe, an external ``skins/`` folder next to ClaudeCat.exe
+    wins over the skins bundled at build time (sys._MEIPASS), so new skins
+    can be added by dropping a folder beside the exe - no rebuild needed.
+    """
+    roots = []
+    if getattr(sys, 'frozen', False):
+        roots.append(Path(sys.executable).parent / 'skins')
+    roots.append(_BASE_DIR / 'skins')
+    return [r for r in roots if r.is_dir()]
+
+# Default skin name
+DEFAULT_SKIN = 'bluecat'
 
 # Threshold for "white" background removal (0-255).
 # Pixels where R, G, B are all above this value are made transparent.
 WHITE_THRESHOLD = 230
+
+
+def list_skins() -> list[str]:
+    """Return sorted list of available skin names across all skin roots."""
+    names: set[str] = set()
+    for root in _skin_roots():
+        names.update(d.name for d in root.iterdir()
+                     if d.is_dir() and any(d.glob('*.png')))
+    if names:
+        return sorted(names)
+    # Fallback: no skins dir, treat legacy frames/ as a single skin
+    if LEGACY_FRAMES_DIR.is_dir():
+        return ['default']
+    return []
+
+
+def _get_skin_dir(skin_name: str) -> Path:
+    """Resolve a skin name to its directory path (external root wins)."""
+    roots = _skin_roots()
+    for root in roots:
+        skin_dir = root / skin_name
+        if skin_dir.is_dir() and any(skin_dir.glob('*.png')):
+            return skin_dir
+    # Fallback to legacy frames/
+    if LEGACY_FRAMES_DIR.is_dir():
+        return LEGACY_FRAMES_DIR
+    raise FileNotFoundError(f'Skin "{skin_name}" not found in {roots}')
+
+
+def _collect_pngs(skin_dir: Path) -> list[Path]:
+    """Collect and sort all PNG files in a skin directory."""
+    pngs = sorted(skin_dir.glob('*.png'))
+    if not pngs:
+        raise FileNotFoundError(f'No PNG files found in {skin_dir}')
+    return pngs
 
 
 def _remove_white_bg(img: Image.Image, threshold: int = WHITE_THRESHOLD) -> Image.Image:
@@ -67,19 +127,23 @@ def _to_premultiplied_bgra(img: Image.Image) -> bytes:
     return bytes(buf)
 
 
-def load_sprite_frames(size: int, facing: str = 'left') -> tuple[bytes, list[bytes]]:
-    """Load bluecat PNG sprites and return (idle_frame, run_frames) as BGRA buffers.
+def load_sprite_frames(size: int, facing: str = 'left',
+                       skin: str = DEFAULT_SKIN) -> tuple[bytes, list[bytes]]:
+    """Load sprite PNG files from a skin folder and return (idle_frame, run_frames).
 
     size:   canvas width/height in px
     facing: 'left' or 'right'
+    skin:   skin name (subdirectory under skins/)
 
     Returns the same format as vectorcat.render_frames() so it's a drop-in replacement.
-    The first frame (bluecat01) is used as the idle frame.
-    All 6 frames are used as the run cycle.
+    The first frame is used as the idle frame.
+    All frames are used as the run cycle.
     """
+    skin_dir = _get_skin_dir(skin)
+    pngs = _collect_pngs(skin_dir)
+
     frames_bgra = []
-    for i in range(1, SPRITE_COUNT + 1):
-        path = FRAMES_DIR / SPRITE_PATTERN.format(i)
+    for path in pngs:
         img = Image.open(path)
         img = _remove_white_bg(img)
         img = _fit_to_square(img, size)
