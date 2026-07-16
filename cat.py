@@ -22,23 +22,84 @@ Success criteria (QA):
 """
 from __future__ import annotations
 
+import ctypes
+import json
+import logging
+import logging.handlers
+import os
 import subprocess
 import sys
 import threading
 import time
 import tkinter as tk
 from datetime import datetime
+from pathlib import Path
 
 import api
 import spritecat
 import winalpha
 
+# Unique enough to not collide with an unrelated app's mutex on the same machine.
+_SINGLE_INSTANCE_MUTEX_NAME = 'ClaudeCat_SingleInstance_5f3a9c1e'
+_ERROR_ALREADY_EXISTS = 183
+_mutex_handle = None
+
+
+def _acquire_single_instance_lock() -> bool:
+    """True if this is the only running instance (Windows named mutex).
+
+    Multiple instances would each poll the usage API independently
+    (multiplying load against an endpoint that already rate-limits hard),
+    stack identical cats at the same default position, and fight over the
+    same rotating log file - so only one instance should run at a time.
+    """
+    handle = ctypes.windll.kernel32.CreateMutexW(None, False, _SINGLE_INSTANCE_MUTEX_NAME)
+    if not handle:
+        return True  # couldn't check (unexpected) - don't block the user over it
+    if ctypes.windll.kernel32.GetLastError() == _ERROR_ALREADY_EXISTS:
+        ctypes.windll.kernel32.CloseHandle(handle)
+        return False
+    global _mutex_handle
+    _mutex_handle = handle  # keep alive for the process lifetime, released on exit
+    return True
+
 # ---- Tunables (edit here, no config file by design) -----------------------
 POLL_INTERVAL = 180          # seconds; do NOT go lower (endpoint 429s hard)
 QUOTA_FIELD = 'five_hour'    # which quota drives the cat (session usage)
+WEEKLY_FIELD = 'seven_day'   # weekly quota, shown on the badge (often the real wall)
 CAT_SIZE = 128               # startup size px; changeable from the right-click menu
 SIZE_CHOICES = (64, 96, 128, 160, 192, 256)   # right-click menu size options
-POLL_CHOICES = (60, 180, 300)                  # right-click menu poll interval options (seconds)
+POLL_CHOICES = (180, 300)    # right-click menu poll interval options; the endpoint
+                             # rate-limits hard below 180s, so no faster option
+
+# The --windowed exe has no console, so print()/stderr vanish silently -
+# everything worth diagnosing goes to this file instead (rotated, 3x512KB).
+LOG_DIR = Path(os.environ.get('LOCALAPPDATA') or Path.home()) / 'ClaudeCat'
+LOG_FILE = LOG_DIR / 'claudecat.log'
+CONFIG_FILE = LOG_DIR / 'config.json'   # persisted user settings (skin/size/...)
+
+
+def _setup_logging() -> logging.Logger:
+    LOG_DIR.mkdir(parents=True, exist_ok=True)
+    handler = logging.handlers.RotatingFileHandler(
+        LOG_FILE, maxBytes=512 * 1024, backupCount=2, encoding='utf-8')
+    handler.setFormatter(logging.Formatter('%(asctime)s %(levelname)s %(message)s'))
+    log = logging.getLogger('claudecat')
+    log.setLevel(logging.INFO)
+    log.addHandler(handler)
+    return log
+
+
+logger = _setup_logging()
+
+
+def _load_config() -> dict:
+    """Read persisted settings; missing/corrupt file just means defaults."""
+    try:
+        data = json.loads(CONFIG_FILE.read_text(encoding='utf-8'))
+        return data if isinstance(data, dict) else {}
+    except (OSError, ValueError):
+        return {}
 
 # usage % (upper bound, inclusive) -> frame interval in ms; None = frozen
 SPEED_TABLE = [
@@ -48,6 +109,7 @@ SPEED_TABLE = [
     (95, 80),     # sprint
     (100, None),  # exhausted: cat freezes
 ]
+SLEEP_INTERVAL = 700  # ms per sleep-cycle frame (only matters if a skin has 2+)
 # ---------------------------------------------------------------------------
 
 
@@ -57,27 +119,50 @@ class ClaudeCat:
         self.root.overrideredirect(True)
         self.root.wm_attributes('-topmost', True)
 
-        # User-toggleable options (right-click menu)
-        self.topmost = tk.BooleanVar(value=True)
-        self.show_pct = tk.BooleanVar(value=True)
-        self.cat_size = tk.IntVar(value=CAT_SIZE)
-        self.facing_right = tk.BooleanVar(value=False)
-        self.poll_interval = tk.IntVar(value=POLL_INTERVAL)
-        self.current_skin = tk.StringVar(value=spritecat.DEFAULT_SKIN)
+        # User-toggleable options (right-click menu), seeded from config.json
+        cfg = _load_config()
+        skin = cfg.get('skin', spritecat.DEFAULT_SKIN)
+        if skin not in spritecat.list_skins():
+            skin = spritecat.DEFAULT_SKIN  # skin folder was renamed/removed
+        size = cfg.get('size', CAT_SIZE)
+        if size not in SIZE_CHOICES:
+            size = CAT_SIZE
+        poll = cfg.get('poll_interval', POLL_INTERVAL)
+        if poll not in POLL_CHOICES:
+            poll = POLL_INTERVAL  # also drops a stale 60s from older configs
+        self.topmost = tk.BooleanVar(value=bool(cfg.get('topmost', True)))
+        self.show_pct = tk.BooleanVar(value=bool(cfg.get('show_pct', True)))
+        self.cat_size = tk.IntVar(value=size)
+        self.facing_right = tk.BooleanVar(value=bool(cfg.get('facing_right', False)))
+        self.poll_interval = tk.IntVar(value=poll)
+        self.current_skin = tk.StringVar(value=skin)
+        # 'live' | 'error' | 'full': lets you preview the sleep/frozen poses
+        # from the right-click menu instead of waiting for the real thing.
+        # Deliberately not persisted - a forgotten forced state would look
+        # like a permanently broken cat on the next start.
+        self.debug_state = tk.StringVar(value='live')
 
-        self.w = self.h = CAT_SIZE
+        self.root.wm_attributes('-topmost', self.topmost.get())
+        self.w = self.h = size
         self._render_cat()
 
         # State shared between poll thread and UI loop
         self.usage_pct: float | None = None   # None = not fetched yet
+        self.weekly_pct: float | None = None
         self.error: str | None = None
         self.resets_at: str | None = None
+        self.weekly_resets_at: str | None = None
         self._frame_idx = 0
         self._refreshing_token = False
 
-        # Bottom-right corner by default
+        # Last saved position, clamped on-screen; else bottom-right corner
         sw, sh = self.root.winfo_screenwidth(), self.root.winfo_screenheight()
-        self.root.geometry(f'{self.w}x{self.h}+{sw - self.w - 40}+{sh - self.h - 140}')
+        x = cfg.get('x', sw - self.w - 40)
+        y = cfg.get('y', sh - self.h - 140)
+        if not (isinstance(x, int) and isinstance(y, int)
+                and -self.w < x < sw and -self.h < y < sh):
+            x, y = sw - self.w - 40, sh - self.h - 140
+        self.root.geometry(f'{self.w}x{self.h}+{x}+{y}')
         self.root.update()  # window must be mapped before we grab its hwnd
         self.canvas = winalpha.LayeredCanvas(self.root.winfo_id(), self.w, self.h)
         self.canvas.draw(self.idle_buffer)
@@ -91,11 +176,14 @@ class ClaudeCat:
         self.badge = tk.Label(self.badge_win, text='...', bg='#222222',
                               fg='#ffffff', font=('Segoe UI', 9, 'bold'), padx=4)
         self.badge.pack()
+        self._last_badge_state: tuple[str, str, str] | None = None
         self._place_badge()
 
         self._bind_mouse()
         self._start_poll_thread()
         self._animate()
+        logger.info('started: skin=%s size=%d poll_interval=%d',
+                    self.current_skin.get(), self.w, self.poll_interval.get())
 
     # ---- UI wiring --------------------------------------------------------
 
@@ -120,16 +208,38 @@ class ClaudeCat:
         y = self.root.winfo_y() + self.h + 2
         self.badge_win.geometry(f'+{x}+{y}')
 
+    def _save_config(self) -> None:
+        cfg = {
+            'skin': self.current_skin.get(),
+            'size': self.cat_size.get(),
+            'facing_right': self.facing_right.get(),
+            'poll_interval': self.poll_interval.get(),
+            'topmost': self.topmost.get(),
+            'show_pct': self.show_pct.get(),
+            'x': self.root.winfo_x(),
+            'y': self.root.winfo_y(),
+        }
+        try:
+            CONFIG_FILE.write_text(json.dumps(cfg, indent=1), encoding='utf-8')
+        except OSError:
+            logger.exception('could not save config')
+
+    def _quit(self) -> None:
+        self._save_config()  # position is only captured here, on clean exit
+        self.root.destroy()
+
     def _set_topmost(self) -> None:
         on = self.topmost.get()
         self.root.wm_attributes('-topmost', on)
         self.badge_win.wm_attributes('-topmost', on)
+        self._save_config()
 
     def _render_cat(self) -> None:
-        self.idle_buffer, self.frame_buffers = spritecat.load_sprite_frames(
+        self.idle_buffer, self.frame_buffers, self.sleep_frames = spritecat.load_sprite_frames(
             self.cat_size.get(),
             facing='right' if self.facing_right.get() else 'left',
             skin=self.current_skin.get())
+        self._sleep_frame_idx = 0
 
     def _apply_look(self) -> None:
         """Re-render after a size/direction change from the menu."""
@@ -144,6 +254,7 @@ class ClaudeCat:
             self.canvas = winalpha.LayeredCanvas(self.root.winfo_id(), size, size)
         self.canvas.draw(self.idle_buffer)  # next animate tick takes over
         self._place_badge()
+        self._save_config()
 
     def _menu(self, e: tk.Event) -> None:
         m = tk.Menu(self.root, tearoff=0)
@@ -152,7 +263,8 @@ class ClaudeCat:
         m.add_separator()
         m.add_checkbutton(label='Always on top', variable=self.topmost,
                           command=self._set_topmost)
-        m.add_checkbutton(label='Show usage %', variable=self.show_pct)
+        m.add_checkbutton(label='Show usage %', variable=self.show_pct,
+                          command=self._save_config)
         size_menu = tk.Menu(m, tearoff=0)
         for s in SIZE_CHOICES:
             size_menu.add_radiobutton(label=f'{s} px', variable=self.cat_size,
@@ -161,7 +273,7 @@ class ClaudeCat:
         poll_menu = tk.Menu(m, tearoff=0)
         for s in POLL_CHOICES:
             poll_menu.add_radiobutton(label=f'{s} sec', variable=self.poll_interval,
-                                      value=s)
+                                      value=s, command=self._save_config)
         m.add_cascade(label='Refresh', menu=poll_menu)
         skin_menu = tk.Menu(m, tearoff=0)
         for name in spritecat.list_skins():
@@ -170,27 +282,75 @@ class ClaudeCat:
         m.add_cascade(label='Skin', menu=skin_menu)
         m.add_checkbutton(label='Face right', variable=self.facing_right,
                           command=self._apply_look)
+        test_menu = tk.Menu(m, tearoff=0)
+        test_menu.add_radiobutton(label='Live (normal)', variable=self.debug_state, value='live')
+        test_menu.add_radiobutton(label='Force error', variable=self.debug_state, value='error')
+        test_menu.add_radiobutton(label='Force 100% (exhausted)', variable=self.debug_state, value='full')
+        m.add_cascade(label='Test', menu=test_menu)
         m.add_separator()
-        m.add_command(label='Quit', command=self.root.destroy)
+        m.add_command(label='Show log', command=self._show_log)
+        m.add_command(label='Quit', command=self._quit)
         m.tk_popup(e.x_root, e.y_root)
 
+    def _show_log(self) -> None:
+        """Show the log in-app: Explorer navigation to AppData\\Local can be
+        blocked by endpoint-security policy on locked-down machines, so this
+        doesn't rely on os.startfile - the text is just selectable/copyable."""
+        try:
+            content = LOG_FILE.read_text(encoding='utf-8') or '(log is empty)'
+        except OSError as exc:
+            content = f'(could not read log file: {exc})'
+
+        win = tk.Toplevel(self.root)
+        win.title(f'ClaudeCat log - {LOG_FILE}')
+        win.geometry('700x400')
+        text = tk.Text(win, wrap='none')
+        text.insert('1.0', content)
+        text.configure(state='disabled')
+        text.pack(fill='both', expand=True)
+        text.see('end')
+
+    def _effective_error(self) -> str | None:
+        """Real error, or a debug-menu override for previewing that state."""
+        if self.debug_state.get() == 'error':
+            return 'DEBUG: forced error'
+        return self.error
+
+    def _effective_usage(self) -> float | None:
+        """Real usage %, or a debug-menu override for previewing that state."""
+        ds = self.debug_state.get()
+        if ds == 'error':
+            return None
+        if ds == 'full':
+            return 100.0
+        return self.usage_pct
+
     def _status_text(self) -> str:
-        if self.error:
-            return f'! {self.error}'
-        if self.usage_pct is None:
+        error = self._effective_error()
+        usage = self._effective_usage()
+        if error:
+            return f'! {error}'
+        if usage is None:
             return 'Fetching usage...'
-        text = f'Session: {self.usage_pct:.0f}%'
-        reset = self._reset_hhmm()
+        text = f'Session: {usage:.0f}%'
+        reset = self._to_local_hhmm(self.resets_at)
         if reset:
             text += f'  (resets {reset})'
+        if self.weekly_pct is not None:
+            text += f'  |  Week: {self.weekly_pct:.0f}%'
+            weekly_reset = self._to_local_hhmm(self.weekly_resets_at, with_date=True)
+            if weekly_reset:
+                text += f' (resets {weekly_reset})'
         return text
 
-    def _reset_hhmm(self) -> str | None:
-        """Session reset time as local-timezone HH:MM, or None."""
-        if not self.resets_at:
+    @staticmethod
+    def _to_local_hhmm(iso: str | None, with_date: bool = False) -> str | None:
+        """ISO timestamp -> local-timezone 'HH:MM' (or 'M/D HH:MM'), or None."""
+        if not iso:
             return None
         try:
-            return datetime.fromisoformat(self.resets_at).astimezone().strftime('%H:%M')
+            dt = datetime.fromisoformat(iso).astimezone()
+            return dt.strftime('%m/%d %H:%M' if with_date else '%H:%M')
         except ValueError:
             return None
 
@@ -198,34 +358,65 @@ class ClaudeCat:
         if not self.show_pct.get():
             self.badge_win.withdraw()
             return
-        if self.error:
-            self.badge.configure(text=' ! ', bg='#aa2222')
-        elif self.usage_pct is None:
-            self.badge.configure(text='...', bg='#222222')
+        error = self._effective_error()
+        usage = self._effective_usage()
+        if error:
+            state = (' ! ', '#aa2222', '#ffffff')
+        elif usage is None:
+            state = ('...', '#222222', '#ffffff')
         else:
-            reset = self._reset_hhmm()
-            text = f' {self.usage_pct:.0f}%' + (f' | {reset} ' if reset else ' ')
-            if self.usage_pct > 90:
-                self.badge.configure(text=text, bg='#3a1111', fg='#ff4444')
-            else:
-                self.badge.configure(text=text, bg='#222222', fg='#ffffff')
+            text = f' {usage:.0f}%'
+            if self.weekly_pct is not None:
+                text += f' W{self.weekly_pct:.0f}%'
+            reset = self._to_local_hhmm(self.resets_at)
+            text += f' | {reset} ' if reset else ' '
+            # Red warning when either quota is nearly gone - the weekly cap
+            # is often what actually locks you out, not the 5h session.
+            hot = usage > 90 or (self.weekly_pct or 0) > 90
+            state = (text, '#3a1111', '#ff4444') if hot \
+                else (text, '#222222', '#ffffff')
+        # Reposition/reconfigure only on real change - this runs every
+        # animation tick (as often as every 80ms), and re-asserting a
+        # -topmost window's geometry that often forces DWM to recomposite
+        # the whole screen, which is what causes other apps to visibly lag.
+        if state != self._last_badge_state:
+            text, bg, fg = state
+            self.badge.configure(text=text, bg=bg, fg=fg)
+            self._last_badge_state = state
         if self.badge_win.state() == 'withdrawn':
             self.badge_win.deiconify()
-        self._place_badge()
+            self._place_badge()
 
     # ---- Animation loop ---------------------------------------------------
 
+    def _should_sleep(self) -> bool:
+        """Sleep pose wins over the run cycle when the skin has one and
+        either Claude isn't reachable (no usage data / error) or the
+        session quota is fully used up."""
+        if not self.sleep_frames:
+            return False
+        error = self._effective_error()
+        usage = self._effective_usage()
+        return bool(error) or usage is None or usage >= 100
+
     def _frame_interval(self) -> int | None:
         """Map current usage % to a frame interval (ms), or None if frozen."""
-        if self.error or self.usage_pct is None:
+        error = self._effective_error()
+        usage = self._effective_usage()
+        if error or usage is None:
             return 300  # API unavailable: gentle default animation
         for upper, interval in SPEED_TABLE:
-            if self.usage_pct <= upper:
+            if usage <= upper:
                 return interval
         return None
 
     def _animate(self) -> None:
         self._update_badge()
+        if self._should_sleep():
+            self._sleep_frame_idx = (self._sleep_frame_idx + 1) % len(self.sleep_frames)
+            self.canvas.draw(self.sleep_frames[self._sleep_frame_idx])
+            self.root.after(SLEEP_INTERVAL, self._animate)
+            return
         interval = self._frame_interval()
         if interval is None:
             # Frozen: show the standing pose and re-check twice a second
@@ -255,7 +446,7 @@ class ClaudeCat:
 
         if 'error' in data:
             self.error = data['error']
-            print(f'[claude-cat] poll failed: {self.error}', file=sys.stderr)
+            logger.error('poll failed: %s', self.error)
             if data.get('auth_error'):
                 self._try_refresh_token()
             if data.get('rate_limited'):
@@ -266,12 +457,26 @@ class ClaudeCat:
         quota = data.get(QUOTA_FIELD)
         if not isinstance(quota, dict) or quota.get('utilization') is None:
             self.error = f'Quota field "{QUOTA_FIELD}" missing in API response'
-            print(f'[claude-cat] {self.error}. Fields: {list(data)}', file=sys.stderr)
+            logger.error('%s. Fields: %s', self.error, list(data))
             return self.poll_interval.get()
 
+        was_error = self.error is not None
         self.error = None
         self.usage_pct = float(quota['utilization'])
         self.resets_at = quota.get('resets_at')
+
+        # Weekly quota is display-only (badge/menu): the session quota drives
+        # the cat, but the weekly cap is often the wall you actually hit first.
+        weekly = data.get(WEEKLY_FIELD)
+        if isinstance(weekly, dict) and weekly.get('utilization') is not None:
+            self.weekly_pct = float(weekly['utilization'])
+            self.weekly_resets_at = weekly.get('resets_at')
+        else:
+            self.weekly_pct = None
+            self.weekly_resets_at = None
+
+        if was_error:
+            logger.info('poll recovered: usage=%.0f%%', self.usage_pct)
         return self.poll_interval.get()
 
     def _try_refresh_token(self) -> None:
@@ -287,8 +492,8 @@ class ClaudeCat:
                     ['claude', 'update'],
                     capture_output=True, timeout=120, shell=(sys.platform == 'win32'),
                 )
-            except Exception as exc:
-                print(f'[claude-cat] token refresh failed: {exc}', file=sys.stderr)
+            except Exception:
+                logger.exception('token refresh failed')
             finally:
                 self._refreshing_token = False
 
@@ -296,4 +501,15 @@ class ClaudeCat:
 
 
 if __name__ == '__main__':
-    ClaudeCat().root.mainloop()
+    if not _acquire_single_instance_lock():
+        # Silent exit: a withdrawn Tk root can't reliably host a modal
+        # messagebox (it may not block/show at all on some setups), and
+        # the user already has a cat on screen - no need to interrupt them.
+        logger.info('another instance is already running; exiting')
+        sys.exit(0)
+
+    try:
+        ClaudeCat().root.mainloop()
+    except Exception:
+        logger.exception('crashed')
+        raise

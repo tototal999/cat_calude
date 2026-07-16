@@ -74,12 +74,39 @@ def _get_skin_dir(skin_name: str) -> Path:
     raise FileNotFoundError(f'Skin "{skin_name}" not found in {roots}')
 
 
-def _collect_pngs(skin_dir: Path) -> list[Path]:
-    """Collect and sort all PNG files in a skin directory."""
-    pngs = sorted(skin_dir.glob('*.png'))
-    if not pngs:
+def _pick_all(pngs: list[Path], marker: str) -> list[Path]:
+    return [p for p in pngs if marker in p.stem.lower()]
+
+
+def _pick_one(pngs: list[Path], marker: str) -> Path | None:
+    matches = _pick_all(pngs, marker)
+    return matches[0] if matches else None
+
+
+def _collect_pngs(skin_dir: Path) -> tuple[list[Path], list[Path], Path | None]:
+    """Collect run-cycle PNGs plus optional sleep/idle special-pose PNGs.
+
+    Filenames containing "sleep" (any case, e.g. "cowcat_sleep_07.png") are
+    the sleep pose - one or more frames, cycled like a mini run-cycle so a
+    multi-frame sleep (e.g. a breathing loop) animates instead of freezing
+    on a single image. A filename containing "_09" is the dedicated
+    standby/idle pose (e.g. ragdollcat's ragdollcat_09.png). Both kinds are
+    excluded from the main run cycle. If a marker isn't present in the
+    skin, that special pose is simply empty/None and callers fall back to
+    their default (e.g. run_frames[0] as idle, no sleep pose at all).
+    """
+    all_pngs = sorted(skin_dir.glob('*.png'))
+    if not all_pngs:
         raise FileNotFoundError(f'No PNG files found in {skin_dir}')
-    return pngs
+    sleep_paths = _pick_all(all_pngs, 'sleep')
+    idle_path = _pick_one(all_pngs, '_09')
+    special = set(sleep_paths) | ({idle_path} if idle_path else set())
+    frame_paths = [p for p in all_pngs if p not in special]
+    if not frame_paths:
+        # The special-pose file(s) were the only PNGs - use them as normal
+        # frames too rather than leaving the skin with no run cycle.
+        return all_pngs, [], None
+    return frame_paths, sleep_paths, idle_path
 
 
 def _remove_white_bg(img: Image.Image, threshold: int = WHITE_THRESHOLD) -> Image.Image:
@@ -127,32 +154,33 @@ def _to_premultiplied_bgra(img: Image.Image) -> bytes:
     return bytes(buf)
 
 
-def load_sprite_frames(size: int, facing: str = 'left',
-                       skin: str = DEFAULT_SKIN) -> tuple[bytes, list[bytes]]:
-    """Load sprite PNG files from a skin folder and return (idle_frame, run_frames).
+def _load_one(path: Path, size: int, facing: str) -> bytes:
+    img = Image.open(path)
+    img = _remove_white_bg(img)
+    img = _fit_to_square(img, size)
+    if facing == 'right':
+        img = img.transpose(Image.FLIP_LEFT_RIGHT)
+    return _to_premultiplied_bgra(img)
+
+
+def load_sprite_frames(size: int, facing: str = 'left', skin: str = DEFAULT_SKIN,
+                       ) -> tuple[bytes, list[bytes], list[bytes]]:
+    """Load sprite PNG files from a skin folder.
 
     size:   canvas width/height in px
     facing: 'left' or 'right'
     skin:   skin name (subdirectory under skins/)
 
-    Returns the same format as vectorcat.render_frames() so it's a drop-in replacement.
-    The first frame is used as the idle frame.
-    All frames are used as the run cycle.
+    Returns (idle_frame, run_frames, sleep_frames). idle_frame is the
+    skin's dedicated "_09" standby pose if it has one, else run_frames[0].
+    sleep_frames is a (possibly multi-frame) cycle for the skin's "sleep"
+    marked PNGs, or an empty list if the skin has none.
     """
     skin_dir = _get_skin_dir(skin)
-    pngs = _collect_pngs(skin_dir)
+    frame_paths, sleep_paths, idle_path = _collect_pngs(skin_dir)
 
-    frames_bgra = []
-    for path in pngs:
-        img = Image.open(path)
-        img = _remove_white_bg(img)
-        img = _fit_to_square(img, size)
+    frames_bgra = [_load_one(p, size, facing) for p in frame_paths]
+    sleep_bgra = [_load_one(p, size, facing) for p in sleep_paths]
+    idle_bgra = _load_one(idle_path, size, facing) if idle_path else frames_bgra[0]
 
-        if facing == 'right':
-            img = img.transpose(Image.FLIP_LEFT_RIGHT)
-
-        frames_bgra.append(_to_premultiplied_bgra(img))
-
-    # idle = first frame; run cycle = all frames
-    idle = frames_bgra[0]
-    return idle, frames_bgra
+    return idle_bgra, frames_bgra, sleep_bgra
