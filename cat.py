@@ -30,17 +30,14 @@ import tkinter as tk
 from datetime import datetime
 
 import api
-import vectorcat
+import spritecat
 import winalpha
 
 # ---- Tunables (edit here, no config file by design) -----------------------
 POLL_INTERVAL = 180          # seconds; do NOT go lower (endpoint 429s hard)
 QUOTA_FIELD = 'five_hour'    # which quota drives the cat (session usage)
-CAT_SIZE = 96                # startup size px; changeable from the right-click menu
-CAT_COLOR = '#000000'        # cat silhouette color, '#rrggbb'
-EYE_COLOR = '#ffcc00'        # eye color, '#rrggbb'
-RUN_FRAMES = 8               # poses per run cycle (more = smoother)
-SIZE_CHOICES = (64, 96, 128, 160)   # right-click menu size options
+CAT_SIZE = 128               # startup size px; changeable from the right-click menu
+SIZE_CHOICES = (64, 96, 128, 160, 192, 256)   # right-click menu size options
 
 # usage % (upper bound, inclusive) -> frame interval in ms; None = frozen
 SPEED_TABLE = [
@@ -126,10 +123,9 @@ class ClaudeCat:
         self.badge_win.wm_attributes('-topmost', on)
 
     def _render_cat(self) -> None:
-        self.idle_buffer, self.frame_buffers = vectorcat.render_frames(
-            self.cat_size.get(), CAT_COLOR, RUN_FRAMES,
-            facing='right' if self.facing_right.get() else 'left',
-            eye_color=EYE_COLOR)
+        self.idle_buffer, self.frame_buffers = spritecat.load_sprite_frames(
+            self.cat_size.get(),
+            facing='right' if self.facing_right.get() else 'left')
 
     def _apply_look(self) -> None:
         """Re-render after a size/direction change from the menu."""
@@ -195,7 +191,10 @@ class ClaudeCat:
         else:
             reset = self._reset_hhmm()
             text = f' {self.usage_pct:.0f}%' + (f' | {reset} ' if reset else ' ')
-            self.badge.configure(text=text, bg='#222222')
+            if self.usage_pct > 90:
+                self.badge.configure(text=text, bg='#3a1111', fg='#ff4444')
+            else:
+                self.badge.configure(text=text, bg='#222222', fg='#ffffff')
         if self.badge_win.state() == 'withdrawn':
             self.badge_win.deiconify()
         self._place_badge()
@@ -205,7 +204,7 @@ class ClaudeCat:
     def _frame_interval(self) -> int | None:
         """Map current usage % to a frame interval (ms), or None if frozen."""
         if self.error or self.usage_pct is None:
-            return None  # error / not loaded: cat sits still
+            return 300  # API unavailable: gentle default animation
         for upper, interval in SPEED_TABLE:
             if self.usage_pct <= upper:
                 return interval
