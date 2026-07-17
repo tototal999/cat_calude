@@ -39,13 +39,14 @@ _DEFAULTS: dict[str, Any] = {
     'model': '',
     'api_key': '',
     'system_prompt': (
-        '你是專業的 AI 助手（由 ClaudeCat 介面提供服務）。\n'
+        '你是專業的 AI 助手。\n'
         '請以詳盡、專業的繁體中文回答使用者的問題，協助分析資料與撰寫程式，無須限制字數。'
     ),
     'max_history_turns': 20,
     'fallback_models': [],
     'export_dir': '',
     'debug_log': False,
+    'max_file_chars': 50000,
 }
 
 _config: dict[str, Any] = {}
@@ -136,6 +137,11 @@ def max_history_turns() -> int:
 
 def system_prompt() -> str:
     return str(_get('system_prompt') or _DEFAULTS['system_prompt'])
+
+
+def max_file_chars() -> int:
+    n = _get('max_file_chars')
+    return int(n) if isinstance(n, (int, float)) and n > 0 else 50000
 
 
 def chat(messages: list[dict[str, str]],

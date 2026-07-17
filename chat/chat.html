@@ -122,10 +122,11 @@
     <span style="color:#aaa;font-size:12px">模型</span>
     <select id="model-select" onchange="onModelChange()"></select>
     <span style="flex:1"></span>
+    <button onclick="clearChatHistory()" title="清除對話上下文 (重新開始新對話)" style="margin-right:8px;background:#533;color:#fcc;border:1px solid #744;border-radius:4px;cursor:pointer;padding:4px 8px">🗑️ 清除</button>
     <button onclick="exportChat()" title="匯出完整對話">📤 匯出</button>
   </div>
   <div id="chat-messages"></div>
-  <div id="chat-typing" class="typing" style="display:none">🐱…</div>
+  <div id="chat-typing" class="typing" style="display:none">🐱 思考中... <span id="chat-timer">0</span>s</div>
   <div class="chat-input">
     <div id="file-preview">📎 <span id="file-name"></span> <span class="remove" onclick="clearFile()">[x]</span></div>
     <button id="chat-attach" onclick="openFile()" title="附加檔案" style="background:#333;color:#ccc;border:1px solid #555;border-radius:6px;cursor:pointer;padding:0 10px">📎</button>
@@ -280,6 +281,15 @@ function onModelChange() {
   pywebview.api.set_model(m);
 }
 
+function clearChatHistory() {
+  if (confirm("確定要清除當前所有的對話紀錄嗎？\n（清除後 LLM 將會忘記前面的所有上下文）")) {
+    pywebview.api.clear_history().then(() => {
+      document.getElementById('chat-messages').innerHTML = '';
+      appendSystem('✅ 對話記憶已清除，現在是一個全新的開始。');
+    });
+  }
+}
+
 function openFile() {
   pywebview.api.open_file_dialog().then(path => {
     if (path) {
@@ -295,6 +305,8 @@ function clearFile() {
   document.getElementById('file-preview').style.display = 'none';
 }
 
+let _timerId = null;
+
 function sendMessage() {
   if (_sending) return;
   const ta = document.getElementById('chat-input');
@@ -309,12 +321,22 @@ function sendMessage() {
 
   appendUser(text + (_attachedFile ? '\n[📎 ' + document.getElementById('file-name').textContent + ']' : ''));
   document.getElementById('chat-typing').style.display = '';
+  
+  const timerSpan = document.getElementById('chat-timer');
+  timerSpan.textContent = '0';
+  let elapsed = 0;
+  _timerId = setInterval(() => {
+    elapsed++;
+    timerSpan.textContent = elapsed;
+  }, 1000);
+  
   scrollBottom();
 
   const fileToSend = _attachedFile;
   clearFile();
 
   pywebview.api.send_message(text, fileToSend).then(result => {
+    clearInterval(_timerId);
     document.getElementById('chat-typing').style.display = 'none';
     _sending = false;
     document.getElementById('chat-send').disabled = false;
@@ -336,8 +358,10 @@ function sendMessage() {
 function appendUser(text) {
   const el = document.createElement('div');
   el.className = 'msg msg-user';
-  el.innerHTML = '<div class="bubble"></div>';
-  el.querySelector('.bubble').textContent = text;
+  const bubble = document.createElement('div');
+  bubble.className = 'bubble';
+  renderMarkdownLite(text, bubble);
+  el.appendChild(bubble);
   document.getElementById('chat-messages').appendChild(el);
 }
 
@@ -346,11 +370,45 @@ function appendAssistant(text, model) {
   el.className = 'msg msg-assistant';
   const bubble = document.createElement('div');
   bubble.className = 'bubble';
-  bubble.textContent = text;
+  renderMarkdownLite(text, bubble);
   el.appendChild(bubble);
   // save button
   const actions = document.createElement('div');
   actions.className = 'msg-actions';
+  
+  if (text.includes('# Slide')) {
+    const pptBtn = document.createElement('button');
+    pptBtn.textContent = '📽️ 匯出成 PPT';
+    pptBtn.onclick = () => {
+      pptBtn.textContent = '轉換中...';
+      pptBtn.disabled = true;
+      pywebview.api.export_ppt(text).then(r => {
+        if (r.error) {
+          pptBtn.textContent = '⚠ ' + r.error;
+        } else if (r.status === 'ok') {
+          pptBtn.textContent = '✓ 已轉存';
+        } else {
+          pptBtn.textContent = '📽️ 匯出成 PPT';
+          pptBtn.disabled = false;
+        }
+      });
+    };
+    actions.appendChild(pptBtn);
+  }
+  
+  const copyBtn = document.createElement('button');
+  copyBtn.textContent = '📋 複製';
+  copyBtn.onclick = () => {
+    navigator.clipboard.writeText(text).then(() => {
+      copyBtn.textContent = '✓ 已複製';
+      setTimeout(() => copyBtn.textContent = '📋 複製', 2000);
+    }).catch(err => {
+      copyBtn.textContent = '⚠ 複製失敗';
+      console.error(err);
+    });
+  };
+  actions.appendChild(copyBtn);
+  
   const saveBtn = document.createElement('button');
   saveBtn.textContent = '💾 存檔';
   saveBtn.onclick = () => {
@@ -386,6 +444,58 @@ function clearMessages() {
 function scrollBottom() {
   const c = document.getElementById('chat-messages');
   c.scrollTop = c.scrollHeight;
+}
+
+function renderMarkdownLite(text, container) {
+  // Regex splits text into [text, lang, code, text, lang, code, text...]
+  const parts = text.split(/```(.*?)[\r\n]+([\s\S]*?)```/g);
+  for (let i = 0; i < parts.length; i++) {
+    if (i % 3 === 0) {
+      if (parts[i]) {
+        const div = document.createElement('div');
+        div.textContent = parts[i];
+        div.style.whiteSpace = 'pre-wrap';
+        container.appendChild(div);
+      }
+    } else if (i % 3 === 1) {
+      const lang = parts[i].trim();
+      const code = parts[i+1];
+      
+      const preWrapper = document.createElement('div');
+      preWrapper.style.position = 'relative';
+      preWrapper.style.margin = '12px 0';
+      
+      const pre = document.createElement('pre');
+      pre.style = 'background: #1e1e1e; color: #d4d4d4; padding: 12px; border-radius: 6px; overflow-x: auto; font-family: Consolas, monospace; font-size: 13px; margin: 0; white-space: pre;';
+      pre.textContent = code;
+      
+      const copyCodeBtn = document.createElement('button');
+      copyCodeBtn.textContent = '📋 複製';
+      copyCodeBtn.style = 'position: absolute; top: 6px; right: 6px; font-size: 11px; background: #444; color: #fff; border: none; padding: 4px 8px; border-radius: 4px; cursor: pointer; opacity: 0.8;';
+      copyCodeBtn.onmouseover = () => copyCodeBtn.style.opacity = '1';
+      copyCodeBtn.onmouseout = () => copyCodeBtn.style.opacity = '0.8';
+      copyCodeBtn.onclick = () => {
+        navigator.clipboard.writeText(code).then(() => {
+          copyCodeBtn.textContent = '✓ 已複製';
+          setTimeout(() => copyCodeBtn.textContent = '📋 複製', 2000);
+        });
+      };
+      
+      if (lang) {
+        const langLabel = document.createElement('span');
+        langLabel.textContent = lang;
+        langLabel.style = 'position: absolute; top: -10px; left: 10px; background: #555; color: #eee; font-size: 11px; padding: 2px 6px; border-radius: 4px; box-shadow: 0 1px 3px rgba(0,0,0,0.3);';
+        preWrapper.appendChild(langLabel);
+        pre.style.paddingTop = '18px';
+      }
+      
+      preWrapper.appendChild(pre);
+      preWrapper.appendChild(copyCodeBtn);
+      container.appendChild(preWrapper);
+      
+      i++; // skip the code part
+    }
+  }
 }
 
 function exportChat() {

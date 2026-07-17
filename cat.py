@@ -807,6 +807,19 @@ class ClaudeCat:
 
 
 if __name__ == '__main__':
+    import sys
+    if len(sys.argv) > 2:
+        if sys.argv[1] == '--worker':
+            import worker
+            worker.main(sys.argv[2])
+            sys.exit(0)
+        elif sys.argv[1] == '--ppt':
+            import worker
+            target = sys.argv[2]
+            template = sys.argv[3] if len(sys.argv) > 3 and sys.argv[3] else None
+            worker.generate_ppt(target, template)
+            sys.exit(0)
+
     if not _acquire_single_instance_lock():
         # Silent exit: a withdrawn Tk root can't reliably host a modal
         # messagebox (it may not block/show at all on some setups), and

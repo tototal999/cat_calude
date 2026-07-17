@@ -4,7 +4,7 @@
 
 ## 需求
 - Windows 10/11、Python 3.10+（含 tkinter，官方安裝包預設就有）
-- `pip install requests Pillow`
+- `pip install requests Pillow pandas openpyxl` (`pandas` 與 `openpyxl` 為交談功能 Excel 解析所需)
 - **Claude Code CLI 已登入**（讀取 `~/.claude/.credentials.json`）
   ⚠️ **只裝 Claude Desktop 不夠**——Claude Desktop 和 Claude Code CLI
   是兩個不同的登入系統，憑證不共用。這隻貓只認 Claude Code CLI 寫入的
@@ -101,8 +101,13 @@ ClaudeCat.exe 所在資料夾\
 
 ## LLM 交談設定（Part 2，選用）
 
-右鍵「交談...」開的視窗有個聊天分頁，接任一 OpenAI 相容端點。**這是公開 repo,
-真實端點不寫進程式碼**——`llm.py` 的 `_DEFAULTS` 只是空範例，實際設定寫在
+右鍵「交談...」開的視窗有個聊天分頁，接任一 OpenAI 相容端點。本專案將 LLM 預設為無字數限制的**專業 AI 助手**（而非單純寵物閒聊），可協助處理複雜業務資料與程式撰寫。
+
+**附加檔案功能（📎）**：
+交談視窗輸入區支援附加資料檔作為 Context（支援 `.txt`, `.csv`, `.md`, `.sql`, `.log`, `.xlsx`, `.xls`）。
+若上傳 Excel 檔案，後端會自動呼叫 `pandas` 將其轉譯為純文字（CSV格式）送出。檔案內容設定有 20,000 字防護上限，並且**不會**被存入對話歷史記憶中，避免單次大檔案卡死後續聊天效能。
+
+**這是公開 repo, 真實端點不寫進程式碼**——`llm.py` 的 `_DEFAULTS` 只是空範例，實際設定寫在
 **執行期**的 `%LOCALAPPDATA%\ClaudeCat\config.json`（不進版控）：
 
 ```json

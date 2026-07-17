@@ -1,23 +1,12 @@
-# ClaudeCat 專案規格 v5（雙部重整版）
+# ClaudeCat 專案規格 v5.7（微服務解耦版）
 
 > 交接文件。讀者是未來的 AI／Claude Code session。
 > 前身：ClaudeCat 方案 A（fork usage-monitor-for-claude 的 api.py ＋ tkinter 桌面貓，RunCat 32px 幀圖放大至 96px）。
 > v5 變更：全案重整為兩大部分——**Part 1 貓基本功能**（動畫＋用量監控開關＋排程提醒）、
 > **Part 2 LLM 交談**（OpenAI 相容端點聊天入口）。Part 1 優先開發，驗收通過才啟動 Part 2。
-> v5.1 變更：**取消 Mac Mini／oMLX 假設**——LLM 端點與模型設定由使用者於 Part 2 啟動前另行提供，
-> 架構只綁 OpenAI 相容協定，不綁特定機器或 runtime。
-> v5.2 變更：新增資料落地政策（debug log 預設關閉）與 context 溢出降級策略。
-> v5.3 變更：新增 **Part 1.5 基礎互動**（點擊／拖曳／右鍵切角色／閒置行為）；
-> 進階手勢（雙擊/長按/懸停/滾輪/甩動/drop file/游標追蹤）列 Part 3 候選；
-> window sitting 與多寵互動否決。
-> v5.4 變更：**架構路線定案——方案 A（Python 自建）續行，Windows 為唯一目標平台**；
-> fork BongoCat(Tauri)/TonyNa(Electron) 經決策矩陣評估後不採；
-> 跨平台暫停評估，僅於「未來開源上 GitHub」情境重啟（屆時跨平台為加分項）。
-> v5.5 變更：參考 clawd-on-desk（AGPL-3.0，**僅概念參考、程式碼零抄用**）——
-> P1.5-4 閒置升級為階段式睡眠序列＋驚醒；Mini mode 列 Part 3 候選；點擊分級維持原定案並補佐證。
-> v5.6 變更：新增「📎 檔案附加當 context」設計（規格已定，**列 Part 3 候選**，Part 2 基本聊天跑通後可直升 P2-11）；
-> 確認 ClaudeCat 定位＝資料縮減後的互動探索介面，不取代 SQL 聚合／批次管線。
-> 範圍排除：AI 客服（屬 erp-llm-v2 前端專案）。
+> v5.1~v5.5：架構與互動定案（Windows 唯一平台、階段式睡眠、點擊分級）。
+> v5.6 變更：新增「📎 檔案附加當 context」設計。
+> v5.7 變更：確立**架構解耦（Option B）**——為解決引入 `pandas/numpy` 解析 Excel 導致主程式暴增破百 MB 的問題，決議未來將 LLM 通訊與檔案解析功能抽離為主程式之外的「子行程 / 獨立 DLL」，讓 `ClaudeCat.exe` 本體恢復為極輕量的桌面元件。
 
 ---
 
@@ -202,9 +191,9 @@ claude-cat/
 |---|---|---|
 | LLM 協定 | OpenAI 相容 `/v1/chat/completions` | Ollama/LM Studio/llama.cpp/MLX 系通用，不綁 runtime |
 | 端點 | 待使用者提供 `base_url`（含 `/v1`）；config 預留 `api_key` 欄位（本地端點通常留空） | 不綁特定機器/runtime |
-| 回覆模式 | **不串流**；timeout 60s；等待「🐱…」常駐 | SSE 複雜度不值 v1；冷載入＋生成可 >30s |
+| 回覆模式 | **不串流**；timeout 180s；等待「🐱 思考中... Xs」常駐計時，超過 180s 報錯中斷 | SSE 複雜度不值 v1；冷載入＋生成可 >30s |
 | 送出防護 | 生成中鎖輸入；`event.isComposing` 防中文選字 Enter 誤送 | 中文使用者必踩雷 |
-| history | 記憶體滑動視窗 `max_history_turns=10`，關窗即清；截斷印灰字 | 簡單優先 |
+| history | 記憶體滑動視窗 `max_history_turns=10`；提供「🗑️ 清除」按鈕清空對話防幻覺；截斷印灰字 | 簡單優先 |
 | 錯誤 | 連線失敗/逾時直接顯示對話區 | 失敗明說；LLM 掛不影響 Part 1 |
 | 資料落地 | 對話 history／組裝後 prompt **不落地**；僅「匯出」與「💾」兩鈕寫檔；**debug log 預設關閉**，需 config 明設 `llm.debug_log: true` 才記 request/response，log 路徑寫死 `{export_dir}/debug/` | 不聲不響記對話是最差情況 |
 | context 溢出 | 端點回 context 相關錯誤（HTTP 400 且訊息含 context/length/token）→ **自動砍半 history 重試一次**（10→5 輪），對話區灰字明說「內容過長，已縮短貓的記憶重試」；重試仍失敗 → 明確報錯不再重試 | 滑動視窗是估算防線，硬上限由端點裁決；降級要明說 |
@@ -224,7 +213,7 @@ messages = [
 System prompt：人設存 config `system_prompt`，程式注入即時用量；**監控 OFF/異常時注入狀態說明、不注入數值**：
 
 ```
-你是 ClaudeCat，一隻住在桌面上的像素貓，平常負責監控主人的 Claude 用量。
+你是 ClaudeCat，一隻住在桌面上的向量貓，平常負責監控主人的 Claude 用量。
 回覆簡短（50 字內），口語自然。
 目前狀態：session 用量 {X}%，weekly {Y}%，重置倒數 {Z}。
 ```
@@ -244,11 +233,26 @@ SQL 聚合與批次呼叫管線仍屬獨立腳本，兩者互補不替代。
 | 項目 | 決策 | 理由 |
 |---|---|---|
 | 觸發 | 輸入區 📎 鈕 → 檔案選擇器；**LLM 不得自行讀檔案系統** | 與「寫檔按鈕觸發」原則對稱 |
-| 格式白名單 | `.txt .md .csv .sql .log`；**不做 .xlsx 解析** | EBS 資料匯 CSV 即可，省 openpyxl 依賴 |
-| 大小上限 | config `llm.max_file_chars`（預設 8000 字）；超過**明說**「檔案 X 字超過上限 Y，請先用 SQL/腳本縮減」，不靜默截斷 | 強制執行「先縮減再對話」紀律 |
+| 格式白名單 | `.txt .md .csv .sql .log .xlsx .xls` | v5.7 決議加入 Excel 支援 |
+| 大小上限 | config `llm.max_file_chars`（預設 20000 字）；超過**明說**「檔案內容過長...」，不靜默截斷 | 強制執行「先縮減再對話」紀律 |
 | context 歸屬 | 檔案內容併入**該則最新輸入**、**不進 history 滑動視窗**（僅該輪有效） | 避免一個檔案吃光後續十輪記憶；溢出防線「砍 history 不砍最新輸入」現成接手 |
 | 溢出 | 零 history＋檔案仍塞不下 → 誠實報錯，不硬塞 | 沿用 v5.2 兩道防線 |
 | 端點彈性 | 若使用者提供的是大 context 端點（如內部 gateway），僅調 config 上限，架構不動 | 已預留 |
+
+### 2.2.1 架構重構：LLM 功能微服務化（Option B 解耦策略）
+
+**背景**：
+為了實作上述的 `.xlsx` 解析，系統引入了 `pandas` 與 `openpyxl`，連帶拉入龐大的 `numpy` DLL。導致原本輕量級的桌面寵物 `ClaudeCat.exe` 體積從數十 MB 暴增破百 MB，每次啟動需在 `%TEMP%` 解壓縮巨量依賴，嚴重拖慢啟動速度與佔用硬碟。
+
+**解耦實作 (Implemented in v5.8)**：
+1. **主程式恢復輕量**：`ClaudeCat.exe` 只負責 UI（tkinter 動畫、排程管理、pywebview 介面呈現），完全排除 `pandas`、`numpy`、`python-pptx` 等重型科學運算與轉檔套件。打包改採 `onedir` 模式，主執行檔縮減至 ~23MB，DLL 皆抽離至 `_internal`。
+2. **分離 Parser / LLM Worker**：
+   - 將 Excel 解析與 PPTX 產生邏輯獨立拆分為 `worker.py`。
+   - **通訊方式**：主程式透過 `subprocess` 呼叫 `ClaudeCat.exe --worker <file>` 來瞬間載入依賴並解析資料，或呼叫 `--ppt <file> <template>` 生成簡報。完成後 Worker 自動銷毀，釋放記憶體。
+3. **PPTX 簡報生成 (v5.8 新功能)**：
+   - 支援將 LLM 產生的 Markdown 大綱（包含 `# Slide`）轉為 `.pptx`。
+   - 採用「先大綱後成品」流程，當對話包含簡報格式時，自動浮現「📽️ 匯出成 PPT」按鈕。
+   - 支援母片套用：優先尋找執行檔同目錄的 `template.pptx`，找不到則退回尋找 `%LOCALAPPDATA%\ClaudeCat\template.pptx`。
 
 ## 2.3 環境前提（LLM 端點側）
 

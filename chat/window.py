@@ -91,6 +91,55 @@ class JsApi:
             return result[0]
         return None
 
+    def clear_history(self):
+        global _history
+        _history = []
+        return {'status': 'ok'}
+
+    def export_ppt(self, text):
+        if _window is None:
+            return {'error': 'No window'}
+        file_types = ('PowerPoint 簡報 (*.pptx)',)
+        result = _window.create_file_dialog(webview.SAVE_DIALOG, save_filename='簡報.pptx', file_types=file_types)
+        if not result or len(result) == 0:
+            return {'status': 'cancelled'}
+            
+        target_path = result[0]
+        
+        try:
+            import sys, subprocess
+            import cat
+            
+            cmd = [sys.executable]
+            if not getattr(sys, 'frozen', False):
+                import __main__
+                main_file = getattr(__main__, '__file__', 'cat.py')
+                cmd.append(main_file)
+                
+            from pathlib import Path
+            if getattr(sys, 'frozen', False):
+                exe_dir = Path(sys.executable).parent
+            else:
+                import __main__
+                exe_dir = Path(getattr(__main__, '__file__', 'cat.py')).parent
+                
+            template_path = exe_dir / 'template.pptx'
+            if not template_path.exists():
+                template_path = cat.LOG_DIR / 'template.pptx'
+                
+            template_arg = str(template_path) if template_path.exists() else ""
+            cmd.extend(['--ppt', target_path, template_arg])
+            
+            creationflags = subprocess.CREATE_NO_WINDOW if sys.platform == 'win32' else 0
+            proc = subprocess.run(cmd, input=text, capture_output=True, text=True, encoding='utf-8', creationflags=creationflags)
+            
+            if proc.returncode != 0:
+                return {'error': f'PPT 轉檔失敗: {proc.stderr}'}
+                
+            return {'status': 'ok', 'path': target_path}
+        except Exception as e:
+            return {'error': f'啟動 Worker 失敗: {e}'}
+
     def send_message(self, text, attached_file=None):
         """Send a user message; manages history + context + overflow retry."""
         global _history
@@ -99,19 +148,29 @@ class JsApi:
         if attached_file:
             try:
                 p = Path(attached_file)
-                if p.suffix.lower() in ('.xlsx', '.xls'):
-                    import pandas as pd
-                    df = pd.read_excel(p)
-                    file_content = df.to_csv(index=False)
-                else:
-                    file_content = p.read_text(encoding='utf-8')
+                import sys, subprocess
+                cmd = [sys.executable]
+                if not getattr(sys, 'frozen', False):
+                    import __main__
+                    main_file = getattr(__main__, '__file__', 'cat.py')
+                    cmd.append(main_file)
+                cmd.extend(['--worker', str(p)])
                 
-                if len(file_content) > 20000:
-                    return {'error': f'檔案內容過長 ({len(file_content)} 字)，請先縮減資料再上傳。'}
+                creationflags = subprocess.CREATE_NO_WINDOW if sys.platform == 'win32' else 0
+                proc = subprocess.run(cmd, capture_output=True, text=True, encoding='utf-8', creationflags=creationflags)
+                
+                if proc.returncode != 0:
+                    return {'error': f'Worker 處理失敗: {proc.stderr}'}
+                    
+                file_content = proc.stdout
+                
+                max_chars = llm.max_file_chars()
+                if len(file_content) > max_chars:
+                    return {'error': f'檔案內容過長 ({len(file_content)} 字 / 上限 {max_chars} 字)，請先縮減資料或調整 config.json 再上傳。'}
                 
                 prompt_text = f"{text}\n\n[附加檔案：{p.name}]\n{file_content}"
             except Exception as e:
-                return {'error': f'讀取檔案失敗: {e}'}
+                return {'error': f'啟動 Worker 失敗: {e}'}
 
         # Build messages: system + history + new user input
         sys_prompt = _build_system_prompt()
@@ -125,7 +184,7 @@ class JsApi:
         messages.extend(window)
         messages.append({'role': 'user', 'content': prompt_text})
 
-        result = llm.chat(messages, model=_current_model)
+        result = llm.chat(messages, model=_current_model, timeout=180)
 
         degraded = None
         if truncated:
@@ -138,7 +197,7 @@ class JsApi:
             messages = [{'role': 'system', 'content': sys_prompt}]
             messages.extend(window)
             messages.append({'role': 'user', 'content': prompt_text})
-            result = llm.chat(messages, model=_current_model)
+            result = llm.chat(messages, model=_current_model, timeout=180)
             if result.get('error'):
                 return result
             degraded = '內容過長，已縮短貓的記憶重試'
