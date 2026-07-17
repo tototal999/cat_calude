@@ -284,9 +284,7 @@ function scrollBottom() {
 }
 
 function renderMarkdownLite(text, container) {
-  const parts = text.split(/```(.*?)[
-
-]+([\s\S]*?)```/g);
+  const parts = text.split(/```(.*?)[\r\n]+([\s\S]*?)```/g);
   for (let i = 0; i < parts.length; i++) {
     if (i % 3 === 0) {
       if (parts[i]) {
@@ -399,7 +397,18 @@ function resetForm() {
 }
 
 window.addEventListener('pywebviewready', () => {
-  syncFields();
-  pywebview.api.get_tab().then(t => showTab(t));
-  pywebview.api.list_schedules().then(renderSchedule);
+  try {
+    syncFields();
+    pywebview.api.get_tab().then(t => showTab(t)).catch(e => alert('Error in get_tab: ' + e));
+    pywebview.api.list_schedules().then(renderSchedule).catch(e => alert('Error in list_schedules: ' + e));
+  } catch (err) {
+    alert('pywebviewready error: ' + err);
+  }
+});
+
+window.addEventListener('error', function(e) {
+  alert('JS Error: ' + e.message + ' at ' + e.filename + ':' + e.lineno);
+});
+window.addEventListener('unhandledrejection', function(e) {
+  alert('Unhandled Rejection: ' + e.reason);
 });

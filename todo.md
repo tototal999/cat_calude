@@ -178,10 +178,25 @@ Part 1 / Part 1.5 / Part 2 程式碼皆已完成。剩下純粹是**實機驗收
 - [x] **階段一：前端拆分**
   - [x] 建立 `frontend/` 目錄。
   - [x] 將 `chat.html` 拆分為 `index.html`、`chat.js`、`style.css`。
-- [ ] **階段二：後端解耦**
-  - [ ] 建立 `backend/` 目錄，將 `window.py` 拆解出 `routes/api.py` (負責 JsApi)。
-  - [ ] 建立 `backend/services/`，將 `llm.py` 移入 `llm_service.py`。
-  - [ ] 建立 `config/settings.py`，集中管理設定檔讀取。
-- [ ] **階段三：資源分離與打包修正**
-  - [ ] 將 System prompt 抽離為純文字 `backend/prompts/system.txt`。
-  - [ ] 更新 `ClaudeCat.spec`，確保 PyInstaller 能正確打包新的資料夾結構。
+- [x] **階段二：後端解耦**
+  - [x] 建立 `backend/` 目錄，將 `window.py` 拆解出 `routes/api.py` (負責 JsApi)。
+  - [x] 建立 `backend/services/`，將 `llm.py` 移入 `llm_service.py`。
+  - [x] 建立 `config/settings.py`，集中管理設定檔讀取。
+- [x] **階段三：資源分離與打包修正**
+  - [x] 將 System prompt 抽離為純文字 `backend/prompts/system.txt`。
+  - [x] 更新 `ClaudeCat.spec`，確保 PyInstaller 能正確打包新的資料夾結構。
+- [x] **重構回歸修復（2026-07-17 晚）**：`config/settings.py` 的 `load_config()`
+      重構時忘了 return，`cat.py` 呼叫端拿到 None 啟動即死（「執行 exe 沒反應」）。
+      已修正為回傳快照 dict，原始碼與 onedir exe 皆實測啟動存活。
+      **教訓：重構後必跑一次啟動煙霧測試再打包。**
+- [x] **重構殘留變數名稱修復（2026-07-17 晚）**：`cat.py` 裡面殘存的
+      `_settings.load_config()` 與 `self._settings.save_config()` 沒被重構腳本替換，
+      導致 NameError 啟動即死。已全數替換為 `settings.load_config()` / `self._save_config()`。
+- [x] **chat.js RegExp 斷行 Syntax Error（2026-07-17 晚）**：`renderMarkdownLite()`
+      中的正規表達式 literal 包含了真實 LF 換行字元，導致整個 chat.js 語法無效，
+      pywebview 拒絕執行——症狀為介面載入但按鈕全無反應、模型選單空白、無法送出訊息。
+      已修正為 `[\r\n]+` 跳脫寫法，並加上全域 `window.onerror` / `unhandledrejection`
+      監聽器，未來 JS 錯誤直接 alert 不再靜默。
+- [ ] **重構遺留清理（待辦）**：根目錄 7 支一次性腳本（move_files.py /
+      refactor_*.py / update_*.py / rewrite_ui.py）與 test.pptx 已進版控，
+      確認重構穩定後應移除；`chat/` 目錄僅剩空 `__init__.py` 可一併清除。

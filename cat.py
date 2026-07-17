@@ -46,7 +46,7 @@ from datetime import datetime
 from pathlib import Path
 
 import api
-import llm
+from backend.services import llm_service as llm
 import scheduler as scheduler_mod
 import spritecat
 import winalpha
@@ -125,7 +125,7 @@ class ClaudeCat:
         self.root.wm_attributes('-topmost', True)
 
         # User-toggleable options (right-click menu), seeded from config.json
-        cfg = _settings.load_config()
+        cfg = settings.load_config()
         skin = cfg.get('skin', spritecat.DEFAULT_SKIN)
         if skin not in spritecat.list_skins():
             skin = spritecat.DEFAULT_SKIN  # skin folder was renamed/removed
@@ -269,7 +269,7 @@ class ClaudeCat:
         """Merge cat-owned keys into config.json, preserving everything
         else (e.g. llm.py's ``llm`` block) - config.json has more than one
         writer, so this must never be a blind full-file overwrite."""
-        cfg = _settings.load_config()
+        cfg = settings.load_config()
         cfg.update({
             'skin': self.current_skin.get(),
             'size': self.cat_size.get(),
@@ -288,14 +288,14 @@ class ClaudeCat:
             logger.exception('could not save config')
 
     def _quit(self) -> None:
-        self._settings.save_config()  # position is only captured here, on clean exit
+        self._save_config()  # position is only captured here, on clean exit
         self.root.destroy()
 
     def _set_topmost(self) -> None:
         on = self.topmost.get()
         self.root.wm_attributes('-topmost', on)
         self.badge_win.wm_attributes('-topmost', on)
-        self._settings.save_config()
+        self._save_config()
 
     def _render_cat(self) -> None:
         (self.idle_buffer, self.frame_buffers, self.sleep_frames,
@@ -318,7 +318,7 @@ class ClaudeCat:
             self.canvas = winalpha.LayeredCanvas(self.root.winfo_id(), size, size)
         self.canvas.draw(self.idle_buffer)  # next animate tick takes over
         self._place_badge()
-        self._settings.save_config()
+        self._save_config()
 
     def _menu(self, e: tk.Event) -> None:
         m = tk.Menu(self.root, tearoff=0)
@@ -459,7 +459,7 @@ class ClaudeCat:
             chatwin.set_usage_status('用量數據尚未取得。')
 
     def _toggle_monitor(self) -> None:
-        self._settings.save_config()
+        self._save_config()
         if self.monitor_enabled.get():
             self._poll_once_async()   # turn ON: refresh right away
         else:

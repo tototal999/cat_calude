@@ -16,7 +16,11 @@ config = {}
 _config_lock = threading.Lock()
 _usage_status = ''
 
-def load_config():
+def load_config() -> dict:
+    """Reload config.json into the module-level ``config`` dict AND return
+    a snapshot copy. cat.py's call sites do ``cfg = load_config()`` then
+    ``cfg.get(...)`` / read-merge-write - returning None here (the original
+    refactor did) crashed the app on startup before the cat even appeared."""
     global config
     with _config_lock:
         if CONFIG_FILE.exists():
@@ -25,6 +29,7 @@ def load_config():
                     config.update(json.load(f))
             except Exception:
                 pass
+        return dict(config)
 
 def save_config():
     with _config_lock:

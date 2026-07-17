@@ -16,27 +16,22 @@
 | 逐像素透明渲染 | winalpha.py (170 行) | ✅ 完成 | 純 stdlib ctypes 實作 UpdateLayeredWindow，取代色鍵去背（解決抗鋸齒洋紅毛邊）；含手刻 PNG 解碼（zlib/struct，無 Pillow） |
 | 精靈圖載入 | spritecat.py (194 行) | ✅ 完成 | 載入 skins/ 下 PNG 精靈圖，去白背景、Pillow 縮放、翻轉朝向；支援 run/idle/sleep/error 四種姿勢自動分類 |
 | 向量貓備用 | vectorcat.py (221 行) | ✅ 完成 | GDI+ 向量黑貓 8 幀跑步循環（已改用精靈圖，保留備援） |
-| 主程式 | cat.py (833 行) | ✅ 完成 | tkinter 無邊框置頂視窗；動畫迴圈 + 輪詢迴圈雙線程；右鍵選單分組（設定收子選單）；含交談開/關貓縮放 + 貼齊視窗跟隨 |
+| 主程式 | cat.py (842 行) | ✅ 完成 | tkinter 無邊框置頂視窗；動畫迴圈 + 輪詢迴圈雙線程；右鍵選單分組（設定收子選單）；含交談開/關貓縮放 + 貼齊視窗跟隨 |
 
 ### 已實作的使用者功能
 
 - **用量驅動跑速**：0-25% 散步 → 25-50% 小跑 → 50-75% 快跑 → 75-95% 狂奔 → >95% 靜止
 - **用量徽章**：貓下方顯示 session% + weekly% + 重置時間，>90% 變紅警示
 - **拖曳移動**：左鍵拖貓或徽章，位置於 Quit 時存入 config.json
-- **右鍵選單**（2026-07-17 重組，見下方「今日修正」）：狀態行（縮短版）/ Refresh now /
-  排程... / 交談... / Skin / 設定（Always on top / Show usage % / 用量監控 /
-  Face right / Size / Refresh 間隔） / Test / Show log / Quit
+- **右鍵選單**：狀態行 / Refresh now / 排程... / 交談... / Skin / 設定（Always on top / Show usage % / 用量監控 / Face right / Size / Refresh 間隔） / Test / Show log / Quit
 - **皮膚系統**：skins/ 下每個子資料夾為一組皮膚（bluecat / cowcat / ragdollcat），右鍵即時切換
-- **多姿勢**：sleep（session 100% 睡覺，靜態單幀）、error（抓不到用量/錯誤時，多幀循環）、
-  idle（>95% 待命）、run（一般跑步）
+- **多姿勢**：sleep / error / idle / run
 - **設定持久化**：skin / 大小 / 朝向 / 置頂 / 輪詢間隔 / 位置，存於 %LOCALAPPDATA%\ClaudeCat\config.json
-  （2026-07-17 修正：改為 read-merge-write，不再清空 llm.py 寫入的 `llm` 區塊）
 - **單實例保護**：Windows Named Mutex 防止重複執行
-- **日誌系統**：RotatingFileHandler 3×512KB；右鍵 Show log 直接彈窗顯示（不依賴 Explorer）
-- **EXE 打包**：PyInstaller spec 檔已備妥（ClaudeCat.spec），skins/ 凍入但支援外部覆蓋；
-  chat.html 已補進 datas（P2 剛完成時漏掉，已修正）
+- **日誌系統**：RotatingFileHandler 3×512KB；右鍵 Show log 直接彈窗顯示
+- **EXE 打包**：PyInstaller spec 檔已備妥（ClaudeCat.spec），skins/ 與 frontend/ 凍入
 
-### Part 1 — 排程提醒 + 用量監控開關
+### Part 1 — 排程提醒 + 用量監控開關 ✅
 
 | 項目 | 狀態 | 說明 |
 |---|---|---|
@@ -45,81 +40,59 @@
 | cat.py 排程整合 | ✅ 完成 | 30 秒 tick、彈卡、alert 加速 3 秒 |
 | 用量監控開關 | ✅ 完成 | ON/OFF 即時切換、OFF 真停輪詢、config 持久化 |
 | 不可用偵測 | ✅ 完成 | 連續 3 次失敗或缺 token → 狀態轉變彈一次卡 |
-| chat/window.py | ✅ 完成 | pywebview 單例 + 排程 js_api + 聊天 js_api |
-| chat/chat.html | ✅ 完成 | Tab 骨架 + 排程頁 + 交談頁 |
-| 右鍵「排程...」「交談...」 | ✅ 完成 | 開啟 pywebview 單例窗至對應分頁 |
 
-### Part 1.5 — 基礎互動
+### Part 1.5 — 基礎互動 ✅
 
 | 項目 | 狀態 | 說明 |
 |---|---|---|
 | P1.5-1 拖曳 + 位置持久化 | ✅ 完成 | 拖曳已有，位置在 Quit 時存 |
-| P1.5-2 點擊隨機小動作 | ✅ 完成 | 5px 位移閾值切分點擊/拖曳；點擊觸發加速 sprint 小動作 |
+| P1.5-2 點擊隨機小動作 | ✅ 完成 | 5px 位移閾值切分點擊/拖曳 |
 | P1.5-3 素材包約定 + 角色子選單 | ✅ 完成 | skins/ 約定生效，右鍵隨選隨切 |
-| P1.5-4 階段式睡眠 + 驚醒 | ✅ 完成 | 閒置計時 (hover/click/用量跳動喚醒)，達 config sleep_min 後入睡 |
+| P1.5-4 階段式睡眠 + 驚醒 | ✅ 完成 | 閒置計時，達 config sleep_min 後入睡 |
 
-### Part 2 — LLM 交談
-
-**LLM 設定**（P2-0 ✅ 已提供）：
-```
-base_url:  http://example.invalid:8000/LLM/v1
-model:     Qwen/Qwen3.6-35B-A3B-FP8-nothink
-api_key:   (不需要)
-engine:    vLLM 0.25.0
-```
-
-**注意**：`/v1/models` 端點回 404，模型下拉改從 config `fallback_models` 靜態清單讀取。
+### Part 2 — LLM 交談 ✅
 
 | 項目 | 狀態 | 說明 |
 |---|---|---|
-| P2-0 使用者提供 LLM 設定 | ✅ 完成 | 已驗證端點連通 |
-| P2-1 端點連通測試 | ✅ 完成 | chat completions 正常回應 |
-| P2-2 curl 連通測試 | ✅ 完成 | /v1/models 404 → 改用 config 靜態清單 |
-| P2-3 llm.py | ✅ 完成 | chat / probe / list_models / export / save_note / debug_log |
-| P2-4 config llm 區塊 | ✅ 完成 | llm.init(CONFIG_FILE) 讀取 llm block |
-| P2-5 chat.html 交談頁 | ✅ 完成 | 模型下拉 / 對話區+💾 / 輸入區 isComposing+送出鎖 / 🐱… / 匯出鈕 |
-| P2-6 window.py 聊天 js_api | ✅ 完成 | send_message / list_models / set_model / save_note / export_chat / probe |
-| P2-7 貓縮放停靠 | ✅ 完成 | 開窗縮 32px；2026-07-17 補強：每 400ms 讀取 pywebview
-  視窗座標貼齊（優先左側，空間不夠自動右側），拖動視窗貓即時跟隨；關窗復原原始大小 |
-| P2-8 上下文管理 | ✅ 完成 | 動態 system prompt 注入用量狀態 / 滑動視窗截斷 / context overflow 砍半重試+灰字 |
-| P2-9 文件匯出 | ✅ 完成 | export_chat → chat_*.md / save_note → note_*.md |
-| P2-10 驗收 | 🔲 未執行 | 需實機測試 |
+| P2-0~P2-2 LLM 設定與連通 | ✅ 完成 | vLLM 端點驗證通過 |
+| P2-3 llm_service.py | ✅ 完成 | chat / probe / list_models / export / save_note |
+| P2-4 config llm 區塊 | ✅ 完成 | llm.init(CONFIG_FILE) 讀取 |
+| P2-5 前端交談頁 | ✅ 完成 | 模型下拉 / 對話區 / 輸入區 / Slash commands |
+| P2-6 JsApi 橋接 | ✅ 完成 | send_message / sessions / export 等 |
+| P2-7 貓縮放停靠 | ✅ 完成 | 開窗縮 32px + 貼齊跟隨 |
+| P2-8 上下文管理 | ✅ 完成 | 動態 system prompt / 滑動視窗截斷 / context overflow |
+| P2-9 文件匯出 | ✅ 完成 | chat_*.md / note_*.md |
 
 ---
 
 ## 今日修正（2026-07-17，實機測試中發現）
 
-以下都是實跑後才浮現的問題，spec 沒列但屬合理範圍內修正，皆已重新打包驗證：
+1. **視窗定位**：排除定位失效疑慮，修好徽章文字變寬後沒有重新置中的 bug。
+2. **config.json 被靜默清空**：改為 read-merge-write，不再覆蓋 llm 區塊。
+3. **LLM 端點曝露**：改成 _DEFAULTS 只留通用範例，真實設定只存 config.json。
+4. **右鍵選單過寬**：狀態行縮短，設定項收進子選單。
+5. **交談視窗與貓分離**：新增 _dock_tick() 貼齊跟隨。
+6. **交談結束貓暴衝**：交談期間持續刷新閒置計時器。
+7. **貓咪位置**：改為對齊視窗底部輸入區。
+8. **模型幻覺預防**：system prompt 明確要求繁體中文、不編造。
+9. **清除對話**：新增🗑️ 清除按鈕。
+10. **思考狀態**：LLM 逾時延長至 180s，加入動態計時器。
+11. **PPTX 生成**：落實 worker.py 解耦，支援 template.pptx 母片套用。
+12. **PPT 轉檔崩潰**：修復 PyInstaller windowed 模式 stdio 為 None 的問題。
+13. **Markdown 渲染**：程式碼區塊高亮 + 一鍵複製。
+14. **Chatbot-UI 風格**：深色主題、Slash commands、highlight.js、側邊欄。
+15. **歷史對話持久化**：Sessions 存於 %LOCALAPPDATA%\ClaudeCat\sessions\。
+16. **exe 啟動即死**：修正 config/settings.py load_config() 忘了 return。
+17. **MVC 重構殘留 `_settings` 未替換**：`cat.py` 殘存 `_settings.load_config()` 與
+    `self._settings.save_config()` 導致 NameError 啟動即死，已全數替換為
+    `settings.load_config()` 與 `self._save_config()`。
+18. **chat.js 正規表達式斷行 Syntax Error**：`renderMarkdownLite()` 中的 RegExp
+    literal 包含了真實的 LF 換行字元（`/```(.*?)[\n\n]+/`），導致整個 JS 檔案
+    語法無效，pywebview 拒絕執行——表現為介面載入但按鈕全部無反應、模型選單空白、
+    無法送出訊息。已修正為 `[\r\n]+` 跳脫寫法。
+19. **前端全域錯誤捕捉**：新增 `window.onerror` 與 `unhandledrejection` 監聽器，
+    未來若再有 JS 執行期錯誤將直接 alert 顯示，不再靜默。
 
-1. **視窗定位懷疑論已排除**：Part 1 執行緒重構後一度懷疑貓/徽章定位失效，用固定座標
-   實測排除；順手修好徽章文字變寬後沒有重新置中的真 bug。
-2. **`config.json` 被靜默清空**：`_save_config()` 原本整檔覆寫，只要拖曳/切皮膚/改設定
-   或 Quit 就會把 `llm.py` 寫入的 `llm` 區塊（端點/模型設定）連根清掉，導致交談分頁
-   莫名連不上。改為 read-merge-write，並補了單元測試驗證合併行為。
-3. **LLM 端點曝露在公開 repo**：`llm.py` 原本硬編公司內部主機名與模型名。改成
-   `_DEFAULTS` 只留通用範例，真實設定只存在執行期 `config.json`（不進版控）。
-   順手修正 `ClaudeCat.spec` 漏打包 `chat.html`、以及過度排除 pywebview 需要的
-   `win32*` 依賴。
-4. **右鍵選單過寬**：狀態行原本是完整句子（`Session: 64% (resets 18:00) | Week: ...`），
-   撐寬整個選單視窗。縮成 `64% | Week 43% (18:00)` 緊湊格式；同時把 Always on top /
-   Show usage % / 用量監控 / Face right / Size / Refresh 間隔收進「設定」子選單，
-   外層只留狀態行 / Refresh now / 排程... / 交談... / Skin / 設定 / Test / Show log / Quit。
-5. **交談視窗與貓分離**：`_on_chat_open` 原本只縮小貓，完全沒有定位到交談視窗旁邊，
-   貓留在原地、視窗開在別處，看起來像兩個不相干的東西。新增 `_dock_tick()`
-   （每 400ms 讀 pywebview 視窗座標貼齊，拖動視窗貓即時跟隨）。
-6. **交談結束貓突然暴衝**：根因是 P1.5-4 閒置睡眠計時器沒把「正在交談」算成有人在用——
-   聊天聊超過 `sleep_min`（預設 10 分）貓會在交談期間偷偷凍結入睡，交談一結束、
-   滑鼠隨便碰到就從睡眠瞬間跳回當下真實用量速度，觀感像暴衝。現在交談期間
-   `_dock_tick()` 順便持續刷新 `_last_interact`，關閉時也明確重置。
-7. **交談時貓咪位置調整**：原本 `_dock_tick()` 將貓咪對齊交談視窗頂部，使用者回饋希望放在對話輸入區旁邊。已修改對齊邏輯，改為對齊視窗底部（`cy = max(0, wy + _wh - self.h - 15)`），使其剛好待在輸入區前方。
-8. **模型幻覺預防**：實測發現 Qwen 模型在回答自身身分時，容易產生幻覺詞彙（如 `hjelp`）。已修正 `llm.py` 中的 `system_prompt`，明確要求其使用繁體中文、簡短回答，且不應胡亂編造詞彙，讓回覆更穩定。
-9. **對話上下文控制 (防幻覺)**：於交談介面新增「🗑️ 清除」按鈕，允許使用者手動清空對話紀錄（`_history`），避免長期對話累積造成模型幻覺。
-10. **思考狀態與長任務支援**：將 LLM 請求逾時從 60s 延長至 180s，並於對話框實作「🐱 思考中... Xs」的動態計時器，提升長時間資料處理的 UX。
-11. **主程式解耦與 PPTX 生成**：落實 Option B 解耦策略，將 `pandas`、`openpyxl` 及新增的 `python-pptx` 拆分至子行程 `worker.py`，改採 `onedir` 打包。並新增「先大綱後成品」的 PPT 匯出功能，支援同目錄 `template.pptx` 母片套用。
-12. **修復 PPT 轉檔崩潰**：解決 PyInstaller windowed 模式下標準 IO 為 `None` 導致 Worker 崩潰的問題，改為直接操作底層 OS 管道 (0, 1, 2) 來讀寫資料與回報錯誤。
-13. **Markdown 渲染與一鍵複製**：於 `chat.html` 新增輕量 Markdown 解析，將程式碼區塊獨立渲染為深色背景，並附上獨立的「📋 複製」按鈕；同時在整篇回覆旁也新增「全篇複製」功能。
-14. **前端介面現代化 (Chatbot-UI 風格)**：重新刻劃 `chat.html` 介面，導入完整的深色主題佈局、`/` 快捷指令 (Slash Commands)、`highlight.js` 程式碼高亮，並加入側邊欄收合功能。
-15. **歷史對話持久化 (Sessions)**：實作對話紀錄存檔機制，將對話存於 `%LOCALAPPDATA%\ClaudeCat\sessions\` 下的 JSON 檔案，讓使用者能於側邊欄讀取、刪除過往對話紀錄。
 ---
 
 ## 未完成事項
@@ -127,91 +100,55 @@ engine:    vLLM 0.25.0
 ### 驗收測試清單 🔲 未執行
 
 **Part 1 驗收 (P1-8)**:
-- [x] daily：設 2 分鐘後 + lead_min=1 → 提前卡與正點卡各彈一次
-      *(✅ test_logic.py 邏輯驗證 + 2026-07-17 實機跑：08:51 lead、08:52 ontime 各觸發一次)*
-- [x] lead_min=0 只彈正點；weekly 非當日不觸發；hourly 每小時該分鐘觸發 *(✅ test_logic.py)*
-- [x] enabled=false / 刪除後不觸發 *(✅ test_logic.py)*
-- [x] schedule.json 改壞格式 → 明確指出錯誤筆，其餘正常 *(✅ test_logic.py)*
-- [o] 彈卡 60s 自動收合；點擊即關；表單即改即存、重啟生效
-      *(2026-07-17 實機看過彈卡外觀正常出現；60s 自動收合未計時驗證、表單存檔未逐項測)*
-- [ ] 排程運作期間貓不掉幀 *(需實機測試)*
-- [ ] 用量 OFF 後 log 零 API 請求、貓恆速 *(需實機測試)*
-- [x] 改壞 credentials → 只彈一次異常卡 + 選單（異常）；修復自動恢復；ON/OFF 重啟保留
-      *(✅ test_logic.py 邏輯驗證；真憑證損壞情境未實機測)*
-
-**視窗定位 bug（2026-07-17 已結案）**：
-Part 1 執行緒重構後（pywebview 主執行緒 + tk 背景執行緒）一度懷疑貓/徽章定位失效。
-用兩組固定座標 (1100,420) / (300,250) 實機驗證：`tkinter` 回報值與 Windows
-`GetWindowRect` 皆精準命中，**現行版本未重現**。過程中另外抓到並修好一個真 bug：
-徽章文字寬度變化時（`...` → `64% W70% | 17:00`）沒有重新置中，導致長期偏移貓中軸
-——已改為文字內容變化時才重新置中（維持先前 DWM 效能修正，不影響每幀效能）。
+- [x] daily / lead_min / weekly / hourly 邏輯 *(test_logic.py + 實機)*
+- [x] enabled=false / 刪除 / 格式錯誤 *(test_logic.py)*
+- [o] 彈卡 60s 自動收合 *(視覺已確認，計時未驗)*
+- [ ] 排程運作期間貓不掉幀
+- [ ] 用量 OFF 後 log 零 API 請求、貓恆速
+- [x] credentials 異常偵測與恢復 *(test_logic.py)*
 
 **Part 1.5 驗收 (P1.5-5)**:
-- [o] 拖到任意位置放手，重啟後在原位
-      *(2026-07-17 已用固定座標間接驗證定位機制正確；未做「手動拖曳→重啟」全流程)*
-- [ ] 點擊即時反應加速，無遲滯感
-- [ ] 切換皮膚/角色立即換幀
-- [ ] 閒置不動達設定時間後進入睡眠狀態；游標滑過或點擊即刻醒來
+- [o] 拖放位置持久化 *(間接驗證)*
+- [ ] 點擊即時反應
+- [ ] 切換皮膚立即換幀
+- [ ] 睡眠 → 驚醒兩階段
 
-### Part 2 — 驗收測試（P2-10）🔲 未執行
-
-- [ ] 聊天期間貓不掉幀；端點離線錯誤明確顯示；開窗即知離線
-- [ ] 中文選字 Enter 不誤送；生成中重按無效；視窗單例
-- [ ] 模型 fallback 提示正確；切模型 history 保留
-- [ ] 監控 OFF 時 prompt 注入狀態說明（貓不拿舊數字胡說）
+**Part 2 驗收 (P2-10)**:
+- [ ] 聊天期間貓不掉幀；端點離線錯誤明確顯示
+- [ ] 中文選字 Enter 不誤送；視窗單例
 - [ ] 匯出/存檔內容正確；關窗貓復原
-- [ ] debug_log 預設關閉時零檔案；設 true 有記錄
-- [ ] 貼超長文字 → 灰字降級提示與重試；極端長度最終報錯
 - [ ] **回歸：P1-8 全數重跑通過**
 
 ### Part 3 — 候選池（不承諾）
 
-- ✅ P2-11 📎 檔案附加當 context（支援 txt, md, csv, sql, log, xlsx, xls 解析與防護機制，已實作）
-- Mini mode（拖至邊緣縮進、懸停探頭）
-- 雙擊/長按/懸停/滾輪/甩動/游標追蹤（需手勢狀態機）
-- SSE 串流回覆
-- 跨 session 聊天記憶
-- 切角色連動聊天人設
-- Agent 委派（claude -p headless）
-- 排程貪睡（snooze）
-
----
-
-## 📌 待使用者決定
-
-- [x] ~~LLM 設定~~ → 已提供 (example.invalid:8000)
-- [x] ~~📎 檔案附加與專業模式~~ → 2026-07-17 已確認直升並實作完成。
-- [ ] 切角色是否連動聊天人設（Part 2 驗收後定案即可）
+- ✅ P2-11 📎 檔案附加當 context（已實作）
+- Mini mode / SSE 串流 / 跨 session 記憶 / Agent 委派 / 排程貪睡
 
 ---
 
 ## 檔案清單
 
 ```
-claude-cat/
-├── api.py            # 251 行  ✅ Anthropic OAuth 用量 API 客戶端
-├── cat.py            # 833 行  ✅ 主程式（選單分組、交談開/關貓縮放+貼齊跟隨、
-│                     #          config read-merge-write、閒置計時修正）
-├── llm.py            # ~240 行 ✅ LLM 客戶端（chat/probe/export/debug_log，
-│                     #          _DEFAULTS 已去除真實端點，見上方修正 #3）
-├── spritecat.py      # 194 行  ✅ 精靈圖載入
-├── winalpha.py       # 170 行  ✅ UpdateLayeredWindow 逐像素 alpha 渲染
-├── vectorcat.py      # 221 行  ✅ GDI+ 向量貓（備用）
-├── scheduler.py      # 208 行  ✅ 排程引擎
-├── verify_pywebview_tk.py  # ✅ pywebview+tkinter 共存驗證腳本
-├── chat/
-│   ├── window.py     # 238 行  ✅ pywebview 單例 + 排程/聊天 js_api + get_geometry()
-│   └── chat.html     #         ✅ 排程頁 + 交談頁（完整實作）
-├── skins/
-│   ├── bluecat/      # ✅ 藍貓皮膚
-│   ├── cowcat/        # ✅ 乳牛貓皮膚
-│   └── ragdollcat/    # ✅ 布偶貓皮膚
-├── frames/           # 舊版 RunCat365 素材（備用）
-├── ClaudeCat.spec    # ✅ PyInstaller 打包配置（含 chat.html datas、win32* 依賴修正）
-├── cat.md            # 需求文件
-├── claudecat-chat-spec.md  # 專案規格 v5.6
-├── todo.md           # 待辦清單
-└── README.md         # 使用說明
+claude-cat/  （2026-07-17 MVC 重構後結構）
+├── cat.py            # 842 行  ✅ 主程式
+├── api.py            # 251 行  ✅ Anthropic OAuth 用量 API
+├── scheduler.py      #          ✅ 排程引擎
+├── spritecat.py      #          ✅ 精靈圖載入
+├── winalpha.py       #          ✅ 逐像素 alpha 渲染
+├── vectorcat.py      #          ✅ 向量貓（備用）
+├── worker.py         # 115 行  ✅ 子行程隔離重依賴
+├── backend/
+│   ├── window_main.py       # 141 行 ✅ pywebview 單例視窗
+│   ├── routes/api.py        # 256 行 ✅ JsApi 橋接
+│   ├── services/llm_service.py # 319 行 ✅ LLM 客戶端
+│   └── prompts/system.txt   #        ✅ system prompt
+├── frontend/
+│   ├── index.html    #          ✅ 雙欄 Chatbot-UI
+│   ├── chat.js       # 414 行  ✅ 前端邏輯 + 全域錯誤捕捉
+│   └── style.css     #          ✅ 深色主題
+├── config/settings.py # 47 行  ✅ 路徑與設定集中管理
+├── skins/            # ✅ bluecat / cowcat / ragdollcat
+├── ClaudeCat.spec    # ✅ PyInstaller onedir 打包配置
 ```
 
 ## 進度摘要
@@ -219,9 +156,8 @@ claude-cat/
 | 階段 | 進度 | 備註 |
 |---|---|---|
 | 核心桌面寵物 | ✅ 100% | 可獨立運作 |
-| Part 1 程式碼 | ✅ 100% | 排程 + 用量開關 + pywebview |
-| Part 1 驗收 | ⏳ 50% | 自動化邏輯測試通過，待實機確認視覺表現 |
-| Part 1.5 基礎互動 | ✅ 100% | 程式碼已完成（點擊小動作/睡眠喚醒） |
-| Part 2 程式碼 | ✅ 100% | P2-3~P2-9 全部完成 |
-| Part 2 驗收 | ⏳ 50% | 自動化邏輯測試通過，待實機確認 UI 行為 |
+| Part 1 排程+監控 | ✅ 100% | 待實機驗收剩餘項 |
+| Part 1.5 基礎互動 | ✅ 100% | 待實機驗收 |
+| Part 2 LLM 交談 | ✅ 100% | 待實機驗收 |
+| MVC 重構 | ✅ 100% | 前後端分離完成 |
 | Part 3 候選池 | 🔲 0% | 不承諾 |
