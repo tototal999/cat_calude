@@ -61,7 +61,9 @@
     margin-top: 4px; }
 
   .chat-input { display: flex; gap: 8px; padding: 10px 12px;
-    background: #262626; border-top: 1px solid #333; }
+    background: #262626; border-top: 1px solid #333; flex-wrap: wrap; }
+  #file-preview { flex-basis: 100%; display: none; font-size: 12px; color: #4a9eff; padding-bottom: 2px; }
+  #file-preview .remove { cursor: pointer; color: #ff6b6b; margin-left: 8px; }
   .chat-input textarea { flex: 1; background: #333; color: #eee;
     border: 1px solid #555; border-radius: 6px; padding: 8px;
     font-family: inherit; font-size: 14px; resize: none;
@@ -125,6 +127,8 @@
   <div id="chat-messages"></div>
   <div id="chat-typing" class="typing" style="display:none">🐱…</div>
   <div class="chat-input">
+    <div id="file-preview">📎 <span id="file-name"></span> <span class="remove" onclick="clearFile()">[x]</span></div>
+    <button id="chat-attach" onclick="openFile()" title="附加檔案" style="background:#333;color:#ccc;border:1px solid #555;border-radius:6px;cursor:pointer;padding:0 10px">📎</button>
     <textarea id="chat-input" rows="1" placeholder="說點什麼..."
       onkeydown="onInputKey(event)"></textarea>
     <button id="chat-send" onclick="sendMessage()">送出</button>
@@ -226,6 +230,7 @@ function submitForm() {
 let _chatInited = false;
 let _composing = false;   // IME composing guard (spec: isComposing)
 let _sending = false;     // send lock: block re-send while generating
+let _attachedFile = null; // selected file path
 
 function initChat() {
   _chatInited = true;
@@ -275,6 +280,21 @@ function onModelChange() {
   pywebview.api.set_model(m);
 }
 
+function openFile() {
+  pywebview.api.open_file_dialog().then(path => {
+    if (path) {
+      _attachedFile = path;
+      document.getElementById('file-name').textContent = path.split('\\').pop().split('/').pop();
+      document.getElementById('file-preview').style.display = 'block';
+    }
+  });
+}
+
+function clearFile() {
+  _attachedFile = null;
+  document.getElementById('file-preview').style.display = 'none';
+}
+
 function sendMessage() {
   if (_sending) return;
   const ta = document.getElementById('chat-input');
@@ -283,17 +303,22 @@ function sendMessage() {
 
   _sending = true;
   document.getElementById('chat-send').disabled = true;
+  document.getElementById('chat-attach').disabled = true;
   ta.value = '';
   autoResize(ta);
 
-  appendUser(text);
+  appendUser(text + (_attachedFile ? '\n[📎 ' + document.getElementById('file-name').textContent + ']' : ''));
   document.getElementById('chat-typing').style.display = '';
   scrollBottom();
 
-  pywebview.api.send_message(text).then(result => {
+  const fileToSend = _attachedFile;
+  clearFile();
+
+  pywebview.api.send_message(text, fileToSend).then(result => {
     document.getElementById('chat-typing').style.display = 'none';
     _sending = false;
     document.getElementById('chat-send').disabled = false;
+    document.getElementById('chat-attach').disabled = false;
 
     if (result.error) {
       appendSystem('⚠ ' + result.error);

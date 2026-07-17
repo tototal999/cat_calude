@@ -39,8 +39,8 @@ _DEFAULTS: dict[str, Any] = {
     'model': '',
     'api_key': '',
     'system_prompt': (
-        '你是 ClaudeCat，一隻住在桌面上的像素貓，平常負責監控主人的 Claude 用量。\n'
-        '請使用繁體中文回答。回覆簡短（50 字內），口語自然且不要胡亂編造或發明奇怪的詞彙。'
+        '你是專業的 AI 助手（由 ClaudeCat 介面提供服務）。\n'
+        '請以詳盡、專業的繁體中文回答使用者的問題，協助分析資料與撰寫程式，無須限制字數。'
     ),
     'max_history_turns': 20,
     'fallback_models': [],

@@ -82,9 +82,36 @@ class JsApi:
         """Warm-up connectivity check. Returns error string or None."""
         return llm.probe()
 
-    def send_message(self, text):
+    def open_file_dialog(self):
+        if _window is None:
+            return None
+        file_types = ('支援的資料檔 (*.txt;*.md;*.csv;*.sql;*.log;*.xlsx;*.xls)', '所有檔案 (*.*)')
+        result = _window.create_file_dialog(webview.OPEN_DIALOG, allow_multiple=False, file_types=file_types)
+        if result and len(result) > 0:
+            return result[0]
+        return None
+
+    def send_message(self, text, attached_file=None):
         """Send a user message; manages history + context + overflow retry."""
         global _history
+
+        prompt_text = text
+        if attached_file:
+            try:
+                p = Path(attached_file)
+                if p.suffix.lower() in ('.xlsx', '.xls'):
+                    import pandas as pd
+                    df = pd.read_excel(p)
+                    file_content = df.to_csv(index=False)
+                else:
+                    file_content = p.read_text(encoding='utf-8')
+                
+                if len(file_content) > 20000:
+                    return {'error': f'檔案內容過長 ({len(file_content)} 字)，請先縮減資料再上傳。'}
+                
+                prompt_text = f"{text}\n\n[附加檔案：{p.name}]\n{file_content}"
+            except Exception as e:
+                return {'error': f'讀取檔案失敗: {e}'}
 
         # Build messages: system + history + new user input
         sys_prompt = _build_system_prompt()
@@ -96,7 +123,7 @@ class JsApi:
 
         messages = [{'role': 'system', 'content': sys_prompt}]
         messages.extend(window)
-        messages.append({'role': 'user', 'content': text})
+        messages.append({'role': 'user', 'content': prompt_text})
 
         result = llm.chat(messages, model=_current_model)
 
@@ -110,7 +137,7 @@ class JsApi:
             window = window[half:]
             messages = [{'role': 'system', 'content': sys_prompt}]
             messages.extend(window)
-            messages.append({'role': 'user', 'content': text})
+            messages.append({'role': 'user', 'content': prompt_text})
             result = llm.chat(messages, model=_current_model)
             if result.get('error'):
                 return result
