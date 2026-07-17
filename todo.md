@@ -1,5 +1,11 @@
 # ClaudeCat TODO
 
+## v2 發行內容（2026-07-17）
+
+- [x] Open WebUI 風格的深色聊天介面：側欄、模型頂欄、歡迎提示與新版輸入列。
+- [x] Windows EXE 明確打包 tkinter、Tcl/Tk DLL 與資料檔，避免目標電腦缺少 tkinter。
+- [x] 打包版本強制使用內建 Tcl/Tk 路徑，不受外部 `TCL_LIBRARY`／`TK_LIBRARY` 環境變數影響。
+
 > 對應 spec：claudecat-chat-spec.md v5.6
 > 順序：Part 1 → 驗收 → Part 1.5（可與 Part 2 並行）→ Part 2（閘門：LLM 設定到位）
 > 更新方式：完成打 `[x]`，發現新事項加在對應區塊尾端並註記日期

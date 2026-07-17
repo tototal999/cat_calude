@@ -41,9 +41,15 @@ import subprocess
 import sys
 import threading
 import time
+from pathlib import Path
+
+if getattr(sys, 'frozen', False):
+    _bundle_dir = Path(sys._MEIPASS)
+    os.environ['TCL_LIBRARY'] = str(_bundle_dir / 'tcl' / 'tcl8.6')
+    os.environ['TK_LIBRARY'] = str(_bundle_dir / 'tcl' / 'tk8.6')
+
 import tkinter as tk
 from datetime import datetime
-from pathlib import Path
 
 import api
 from backend.services import llm_service as llm

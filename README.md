@@ -1,7 +1,7 @@
-# ClaudeCat (v6.0: Chatbot-UI & MVC 架構)
+# ClaudeCat v2
 
 桌面藍貓寵物，跑速反映 Claude 5 小時 session 用量。
-最新 v6.0 版本導入了**完整的 Chatbot-UI 風格現代化介面**、**歷史對話持久化 (Sessions)** 以及**前後端分離 (MVC-like) 的內部架構**。
+v2 導入 Open WebUI 風格的聊天介面、歷史對話持久化（Sessions）、前後端分離架構，以及可攜式的 Windows EXE 打包修復。
 
 ## 需求
 - Windows 10/11、Python 3.10+（含 tkinter，官方安裝包預設就有）

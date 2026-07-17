@@ -1,15 +1,27 @@
 # -*- mode: python ; coding: utf-8 -*-
 
+from pathlib import Path
+import sys
+
+_python_root = Path(sys.base_prefix)
+_python_dlls = _python_root / 'DLLs'
+_tk_binaries = [
+    (str(_python_dlls / '_tkinter.pyd'), '.'),
+    (str(_python_dlls / 'tcl86t.dll'), '.'),
+    (str(_python_dlls / 'tk86t.dll'), '.'),
+]
 
 a = Analysis(
     ['cat.py'],
     pathex=[],
-    binaries=[],
+    binaries=_tk_binaries,
     # chat.html is a data file (not a Python import) - pywebview loads it
     # from disk by path, so PyInstaller's static import analysis can't see
     # it and it must be listed explicitly like skins/.
-    datas=[('skins', 'skins'), ('frontend', 'frontend'), ('claudecat.ico', '.')],
-    hiddenimports=['pandas', 'openpyxl', 'pptx'],
+    datas=[('skins', 'skins'), ('frontend', 'frontend'), ('claudecat.ico', '.'),
+           (str(_python_root / 'tcl'), 'tcl'),
+           (str(_python_root / 'Lib' / 'tkinter'), 'tkinter')],
+    hiddenimports=['tkinter', 'tkinter.ttk', 'pandas', 'openpyxl', 'pptx'],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
