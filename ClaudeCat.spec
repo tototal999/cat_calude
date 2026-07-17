@@ -5,7 +5,10 @@ a = Analysis(
     ['cat.py'],
     pathex=[],
     binaries=[],
-    datas=[('skins', 'skins')],
+    # chat.html is a data file (not a Python import) - pywebview loads it
+    # from disk by path, so PyInstaller's static import analysis can't see
+    # it and it must be listed explicitly like skins/.
+    datas=[('skins', 'skins'), ('chat/chat.html', 'chat')],
     hiddenimports=[],
     hookspath=[],
     hooksconfig={},
@@ -13,8 +16,10 @@ a = Analysis(
     # Pulled in by other packages' PyInstaller hooks (e.g. Pillow/requests
     # detecting these installed in the build env) even though this project
     # never imports them - excluding cuts ~50MB of dead weight from the exe.
-    excludes=['numpy', 'cryptography', 'win32ctypes', 'win32com', 'win32api',
-              'win32con', 'pythoncom', 'pywintypes'],
+    # win32com/win32api/win32con/pythoncom/pywintypes were excluded before
+    # Part 2 - pywebview's Windows (Edge WebView2) backend actually needs
+    # them, so only numpy/cryptography/win32ctypes stay excluded now.
+    excludes=['numpy', 'cryptography', 'win32ctypes'],
     noarchive=False,
     optimize=0,
 )

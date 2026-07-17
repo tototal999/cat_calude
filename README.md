@@ -99,6 +99,27 @@ ClaudeCat.exe 所在資料夾\
   貓會以預設速度跑步並在 stderr 印出實際可用欄位清單，改常數即可。
 - token 過期時自動背景跑 `claude update` 刷新（同 usage-monitor-for-claude 做法）。
 
+## LLM 交談設定（Part 2，選用）
+
+右鍵「交談...」開的視窗有個聊天分頁，接任一 OpenAI 相容端點。**這是公開 repo,
+真實端點不寫進程式碼**——`llm.py` 的 `_DEFAULTS` 只是空範例，實際設定寫在
+**執行期**的 `%LOCALAPPDATA%\ClaudeCat\config.json`（不進版控）：
+
+```json
+{
+  "llm": {
+    "base_url": "http://your-host:8000/v1",
+    "model": "your-model-name",
+    "api_key": "",
+    "fallback_models": []
+  }
+}
+```
+
+沒有這個區塊時交談分頁能開但送不出訊息（`base_url` 落到範例值連不上）。
+`/v1/models` 探測失敗（404 或不支援）時，模型下拉選單改讀 `fallback_models`
+靜態清單，`model` 欄位的值永遠排第一個。
+
 ## 架構
 ```
 claude-cat/

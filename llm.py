@@ -29,10 +29,14 @@ import requests
 logger = logging.getLogger('claudecat')
 
 # ---- Config defaults (overridden by config.json ``llm`` block) ------------
+# No real endpoint is committed here - this repo is public. Your actual
+# base_url/model/api_key go in the *runtime* config.json (never checked
+# into git), e.g.:
+#   "llm": {"base_url": "http://your-host:8000/v1", "model": "your-model"}
 
 _DEFAULTS: dict[str, Any] = {
-    'base_url': 'http://example.invalid:8000/LLM/v1',
-    'model': 'Qwen/Qwen3.6-35B-A3B-FP8-nothink',
+    'base_url': 'http://localhost:8000/v1',   # example only - set your own in config.json
+    'model': '',
     'api_key': '',
     'system_prompt': (
         '你是 ClaudeCat，一隻住在桌面上的像素貓，平常負責監控主人的 Claude 用量。\n'
