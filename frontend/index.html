@@ -2,102 +2,103 @@
 <html lang="zh-Hant">
 <head>
 <meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>ClaudeCat</title>
-<!-- Include Highlight.js -->
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/styles/github-dark.min.css">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/highlight.min.js"></script>
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
-<div style="display: flex; height: 100vh; background-color: #343541; color: #ececec; position: relative;">
-  
-  <!-- Sidebar -->
-  <div id="sidebar">
-    <button class="btn-new-chat" onclick="newChat()">
-      <span style="font-size: 20px;">+</span> <span style="font-weight: 500;">New chat</span>
-    </button>
-    <div style="margin-top: 24px; flex-grow: 1; display: flex; flex-direction: column;">
-      <div style="font-size: 12px; color: #888; margin-bottom: 8px; padding-left: 8px; font-weight: 600;">History</div>
-      <div id="session-list" style="flex: 1; overflow-y: auto;">
-        <!-- History items loaded dynamically -->
-      </div>
+<div class="app-shell">
+  <aside id="sidebar" aria-label="Chat navigation">
+    <div class="brand-row">
+      <div class="brand-mark">C</div>
+      <span class="brand-name">ClaudeCat</span>
+      <span class="brand-badge">LOCAL</span>
     </div>
-    <div class="sidebar-bottom" style="border-top: 1px solid #444; padding-top: 12px;">
-       <button class="nav-item" id="nav-schedule" onclick="showTab('schedule')">📅 Schedule</button>
-       <button class="nav-item" onclick="exportChat()">📤 Export History</button>
+    <button class="btn-new-chat" onclick="newChat()"><span>+</span> New chat</button>
+    <nav class="sidebar-nav">
+      <button class="nav-item nav-item-static" onclick="showTab('chat')"><span>⌂</span> Chat</button>
+      <button class="nav-item nav-item-static" id="nav-schedule" onclick="showTab('schedule')"><span>◷</span> Schedule</button>
+    </nav>
+    <div class="history-section">
+      <div class="section-label"><span>Recent chats</span><button class="text-button" onclick="loadSessions()" title="Refresh">↻</button></div>
+      <div id="session-list"></div>
     </div>
-  </div>
-  
-  <!-- Resize Handle -->
+    <div class="sidebar-footer">
+      <button class="nav-item nav-item-static" onclick="exportChat()"><span>⇩</span> Export conversation</button>
+      <div class="local-status"><span></span> Local workspace</div>
+    </div>
+  </aside>
+
   <div id="sidebar-resize"></div>
-  
-  <!-- Main -->
-  <div style="flex: 1; display: flex; flex-direction: column; position: relative; min-width: 0;">
-    
-    <!-- Top Header -->
-    <div style="height: 56px; border-bottom: 1px solid rgba(0,0,0,0.1); display: flex; align-items: center; justify-content: center; position: relative;">
-        <button class="icon-btn" style="position: absolute; left: 12px;" onclick="toggleSidebar()" title="Toggle Sidebar">☰</button>
-        <select id="model-select" onchange="onModelChange()" style="background: transparent; border: none; font-weight: bold; font-size: 16px; cursor: pointer; appearance: none; padding-right: 20px;"></select>
-    </div>
-    
-    <!-- Chat Page -->
-    <div id="page-chat" class="page active" style="position: relative;">
-      <div id="chat-messages"></div>
-      
-      <div style="position: absolute; bottom: 0; left: 0; right: 0; background: linear-gradient(180deg, transparent, #343541 30%); padding: 24px; padding-bottom: 36px; display: flex; justify-content: center;">
-         <div style="width: 100%; max-width: 800px; position: relative;">
-            <div id="chat-typing" class="typing" style="display:none">🐱 Thinking... <span id="chat-timer">0</span>s</div>
-            <div id="prompts-dropdown"></div>
-            <div id="file-preview" style="display:none;">📎 <span id="file-name"></span> <span class="remove" onclick="clearFile()">✕</span></div>
-            <div class="chat-input-wrapper" style="display: flex; align-items: flex-end; gap: 8px;">
-               <button id="chat-attach" class="icon-btn" onclick="openFile()" title="Attach File">📎</button>
-               <textarea id="chat-input" rows="1" placeholder="Send a message... (Type '/' for templates)" onkeydown="onInputKey(event)" oninput="handleInput()"></textarea>
-               <button id="chat-send" class="icon-btn primary" onclick="sendMessage()">➤</button>
-            </div>
-            <div style="text-align: center; font-size: 11px; color: #888; margin-top: 12px;">ClaudeCat AI. Check specs for exact usage limits.</div>
-         </div>
+
+  <main class="main-panel">
+    <header class="topbar">
+      <button class="icon-btn menu-button" onclick="toggleSidebar()" title="Toggle sidebar">☰</button>
+      <div class="model-control">
+        <span class="model-dot"></span>
+        <select id="model-select" onchange="onModelChange()" aria-label="Model"></select>
       </div>
-    </div>
-    
-    <!-- Schedule Page -->
-    <div id="page-schedule" class="page" style="padding: 40px; overflow-y: auto; display: none; max-width: 800px; margin: 0 auto; width: 100%;">
-      <h2 style="margin-top: 0; color: #ececec;">Schedule Configuration</h2>
-      <div id="errors" style="color: #f87171; white-space: pre-line; margin-bottom: 12px;"></div>
-      <table>
-        <thead><tr><th>Status</th><th>Title</th><th>Interval</th><th>Action</th></tr></thead>
-        <tbody id="list"></tbody>
-      </table>
+      <div class="topbar-spacer"></div>
+    </header>
 
-      <form onsubmit="return false">
-        <h3 style="margin-top: 0; margin-bottom: 16px; color: #ececec; font-size: 15px;">New / Edit Rule</h3>
-        <input type="hidden" id="f-id">
-        <div class="row"><label>Title</label><input id="f-title" style="flex:1"></div>
-        <div class="row"><label>Cycle</label>
-          <select id="f-type" onchange="syncFields()">
-            <option value="daily">Daily</option>
-            <option value="weekly">Weekly</option>
-            <option value="hourly">Hourly</option>
-          </select>
-          <span id="f-day-wrap"><select id="f-day">
-            <option>MO</option><option>TU</option><option>WE</option><option>TH</option>
-            <option>FR</option><option>SA</option><option>SU</option>
-          </select></span>
-          <span id="f-time-wrap"><input id="f-time" type="time" value="09:00"></span>
-          <span id="f-minute-wrap">Minute <input id="f-minute" type="number" min="0" max="59" value="0" style="width: 60px;"></span>
+    <section id="page-chat" class="page active">
+      <div id="chat-messages">
+        <div id="empty-state" class="empty-state">
+          <div class="empty-cat">🐱</div>
+          <h1>How can I help today?</h1>
+          <p>Ask about a file, draft an idea, or use <strong>/</strong> for a prompt template.</p>
+          <div class="starter-grid">
+            <button onclick="useStarter('Summarize the following information:\n\n')">Summarize information <span>→</span></button>
+            <button onclick="useStarter('Review the following code for bugs and security issues:\n\n')">Review some code <span>→</span></button>
+            <button onclick="useStarter('Translate the following text into professional English:\n\n')">Translate text <span>→</span></button>
+          </div>
         </div>
-        <div class="row"><label>Lead Time</label>
-          <div><input id="f-lead" type="number" min="0" value="0" style="width: 60px;"> minutes <span style="color: #888; font-size: 12px;">(0 = trigger on exact time only)</span></div>
+      </div>
+
+      <div class="composer-area">
+        <div class="composer-inner">
+          <div id="chat-typing" class="typing" style="display:none">Thinking <span id="chat-timer">0</span>s</div>
+          <div id="prompts-dropdown"></div>
+          <div id="file-preview" style="display:none"><span>⌁</span> <span id="file-name"></span><button class="remove" onclick="clearFile()" title="Remove attachment">×</button></div>
+          <div class="chat-input-wrapper">
+            <button id="chat-attach" class="icon-btn" onclick="openFile()" title="Attach file">⌕</button>
+            <textarea id="chat-input" rows="1" placeholder="Message ClaudeCat" onkeydown="onInputKey(event)" oninput="handleInput()"></textarea>
+            <button id="chat-send" class="icon-btn primary" onclick="sendMessage()" title="Send message">↑</button>
+          </div>
+          <p class="composer-disclaimer">ClaudeCat can make mistakes. Verify important information.</p>
         </div>
-        <div class="row" style="margin-top: 20px;">
-          <button class="primary" onclick="submitForm()" id="f-submit">Save Rule</button>
-          <button onclick="resetForm()" style="background:transparent;color:#ececec;border:1px solid #555;padding:8px 16px;border-radius:6px;cursor:pointer">Clear</button>
-          <span id="f-msg" style="color: #a1a1aa; margin-left: 10px;"></span>
+      </div>
+    </section>
+
+    <section id="page-schedule" class="page schedule-page">
+      <div class="schedule-content">
+        <div class="page-heading"><p class="eyebrow">AUTOMATION</p><h1>Schedule</h1><p>Manage reminders for your desktop cat.</p></div>
+        <div id="errors" class="form-errors"></div>
+        <div class="schedule-card">
+          <table>
+            <thead><tr><th>Status</th><th>Title</th><th>Interval</th><th>Action</th></tr></thead>
+            <tbody id="list"></tbody>
+          </table>
         </div>
-      </form>
-    </div>
-  </div>
+        <form onsubmit="return false">
+          <h2>New or edit rule</h2>
+          <input type="hidden" id="f-id">
+          <div class="row"><label>Title</label><input id="f-title" style="flex:1"></div>
+          <div class="row"><label>Cycle</label>
+            <select id="f-type" onchange="syncFields()"><option value="daily">Daily</option><option value="weekly">Weekly</option><option value="hourly">Hourly</option></select>
+            <span id="f-day-wrap"><select id="f-day"><option>MO</option><option>TU</option><option>WE</option><option>TH</option><option>FR</option><option>SA</option><option>SU</option></select></span>
+            <span id="f-time-wrap"><input id="f-time" type="time" value="09:00"></span>
+            <span id="f-minute-wrap">Minute <input id="f-minute" type="number" min="0" max="59" value="0"></span>
+          </div>
+          <div class="row"><label>Lead time</label><div><input id="f-lead" type="number" min="0" value="0"> minutes <span class="hint">0 = exact time only</span></div></div>
+          <div class="row form-actions"><button class="primary" onclick="submitForm()" id="f-submit">Save rule</button><button class="secondary" onclick="resetForm()">Clear</button><span id="f-msg"></span></div>
+        </form>
+      </div>
+    </section>
+  </main>
 </div>
-
 <script src="chat.js"></script>
 </body>
 </html>

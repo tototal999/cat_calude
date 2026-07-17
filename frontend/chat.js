@@ -24,6 +24,7 @@ function showTab(t) {
   document.getElementById('page-chat').classList.remove('active');
   document.getElementById('page-schedule').classList.remove('active');
   document.getElementById('page-' + t).classList.add('active');
+  document.getElementById('nav-schedule').classList.toggle('active', t === 'schedule');
   if (t === 'chat' && !_chatInited) initChat();
 }
 
@@ -110,6 +111,7 @@ function loadSession(id) {
       if (msg.role === 'user') appendUserUI(msg.content);
       else if (msg.role === 'assistant') appendAssistantUI(msg.content);
     });
+    updateEmptyState();
     if (r.model) document.getElementById('model-select').value = r.model;
     loadSessions(); // update active state
     scrollBottom();
@@ -273,7 +275,15 @@ function sendMessage() {
 }
 
 function clearMessagesUI() {
-  document.getElementById('chat-messages').innerHTML = '';
+  document.querySelectorAll('#chat-messages .msg').forEach(msg => msg.remove());
+  updateEmptyState();
+}
+
+function updateEmptyState() {
+  const messages = document.getElementById('chat-messages');
+  const empty = document.getElementById('empty-state');
+  if (!empty) return;
+  empty.classList.toggle('hidden', messages.querySelector('.msg') !== null);
 }
 
 function appendUserUI(text) {
@@ -286,6 +296,7 @@ function appendUserUI(text) {
   renderMarkdownLite(text, bubble);
   el.appendChild(content);
   document.getElementById('chat-messages').appendChild(el);
+  updateEmptyState();
 }
 
 function appendAssistantUI(text) {
@@ -327,6 +338,7 @@ function appendAssistantUI(text) {
   bubble.appendChild(actions);
   el.appendChild(content);
   document.getElementById('chat-messages').appendChild(el);
+  updateEmptyState();
 }
 
 function scrollBottom() {
@@ -451,6 +463,14 @@ function resetForm() {
   document.getElementById('f-title').value = '';
   document.getElementById('f-msg').innerText = '';
   _editingEnabled = true;
+}
+
+function useStarter(text) {
+  showTab('chat');
+  const input = document.getElementById('chat-input');
+  input.value = text;
+  input.focus();
+  autoResize(input);
 }
 
 window.addEventListener('pywebviewready', () => {
