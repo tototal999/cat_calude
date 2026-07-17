@@ -272,7 +272,11 @@ class ClaudeCat:
         self.badge_win.geometry(f'+{x}+{y}')
 
     def _save_config(self) -> None:
-        cfg = {
+        """Merge cat-owned keys into config.json, preserving everything
+        else (e.g. llm.py's ``llm`` block) - config.json has more than one
+        writer, so this must never be a blind full-file overwrite."""
+        cfg = _load_config()
+        cfg.update({
             'skin': self.current_skin.get(),
             'size': self.cat_size.get(),
             'facing_right': self.facing_right.get(),
@@ -282,9 +286,10 @@ class ClaudeCat:
             'usage_monitor': {'enabled': self.monitor_enabled.get()},
             'x': self.root.winfo_x(),
             'y': self.root.winfo_y(),
-        }
+        })
         try:
-            CONFIG_FILE.write_text(json.dumps(cfg, indent=1), encoding='utf-8')
+            CONFIG_FILE.write_text(json.dumps(cfg, indent=1, ensure_ascii=False),
+                                   encoding='utf-8')
         except OSError:
             logger.exception('could not save config')
 
@@ -326,42 +331,55 @@ class ClaudeCat:
         m.add_command(label=self._status_text(), state='disabled')
         m.add_command(label='Refresh now', command=self._poll_once_async)
         m.add_separator()
-        m.add_checkbutton(label='Always on top', variable=self.topmost,
-                          command=self._set_topmost)
-        m.add_checkbutton(label='Show usage %', variable=self.show_pct,
-                          command=self._save_config)
-        monitor_label = '用量監控（異常）' if (self.monitor_enabled.get()
-                                              and self.monitor_unavailable) else '用量監控'
-        m.add_checkbutton(label=monitor_label, variable=self.monitor_enabled,
-                          command=self._toggle_monitor)
         m.add_command(label='排程...', command=self._open_schedule)
         m.add_command(label='交談...', command=self._open_chat)
-        size_menu = tk.Menu(m, tearoff=0)
-        for s in SIZE_CHOICES:
-            size_menu.add_radiobutton(label=f'{s} px', variable=self.cat_size,
-                                      value=s, command=self._apply_look)
-        m.add_cascade(label='Size', menu=size_menu)
-        poll_menu = tk.Menu(m, tearoff=0)
-        for s in POLL_CHOICES:
-            poll_menu.add_radiobutton(label=f'{s} sec', variable=self.poll_interval,
-                                      value=s, command=self._save_config)
-        m.add_cascade(label='Refresh', menu=poll_menu)
+
         skin_menu = tk.Menu(m, tearoff=0)
         for name in spritecat.list_skins():
             skin_menu.add_radiobutton(label=name, variable=self.current_skin,
                                       value=name, command=self._apply_look)
         m.add_cascade(label='Skin', menu=skin_menu)
-        m.add_checkbutton(label='Face right', variable=self.facing_right,
-                          command=self._apply_look)
+
+        m.add_cascade(label='設定', menu=self._build_settings_menu(m))
+
         test_menu = tk.Menu(m, tearoff=0)
         test_menu.add_radiobutton(label='Live (normal)', variable=self.debug_state, value='live')
         test_menu.add_radiobutton(label='Force error', variable=self.debug_state, value='error')
         test_menu.add_radiobutton(label='Force 100% (exhausted)', variable=self.debug_state, value='full')
         m.add_cascade(label='Test', menu=test_menu)
+
         m.add_separator()
         m.add_command(label='Show log', command=self._show_log)
         m.add_command(label='Quit', command=self._quit)
         m.tk_popup(e.x_root, e.y_root)
+
+    def _build_settings_menu(self, parent: tk.Menu) -> tk.Menu:
+        """Everything that isn't a top-level action lives here, so the
+        main right-click menu stays short (spec-adjacent, user-reported:
+        too many flat items)."""
+        sm = tk.Menu(parent, tearoff=0)
+        sm.add_checkbutton(label='Always on top', variable=self.topmost,
+                           command=self._set_topmost)
+        sm.add_checkbutton(label='Show usage %', variable=self.show_pct,
+                           command=self._save_config)
+        monitor_label = '用量監控（異常）' if (self.monitor_enabled.get()
+                                              and self.monitor_unavailable) else '用量監控'
+        sm.add_checkbutton(label=monitor_label, variable=self.monitor_enabled,
+                           command=self._toggle_monitor)
+        sm.add_checkbutton(label='Face right', variable=self.facing_right,
+                           command=self._apply_look)
+        sm.add_separator()
+        size_menu = tk.Menu(sm, tearoff=0)
+        for s in SIZE_CHOICES:
+            size_menu.add_radiobutton(label=f'{s} px', variable=self.cat_size,
+                                      value=s, command=self._apply_look)
+        sm.add_cascade(label='Size', menu=size_menu)
+        poll_menu = tk.Menu(sm, tearoff=0)
+        for s in POLL_CHOICES:
+            poll_menu.add_radiobutton(label=f'{s} sec', variable=self.poll_interval,
+                                      value=s, command=self._save_config)
+        sm.add_cascade(label='Refresh', menu=poll_menu)
+        return sm
 
     # ---- Schedule + monitor toggle (Part 1) --------------------------------
 
@@ -374,7 +392,8 @@ class ClaudeCat:
         chatwin.request_open('chat')
 
     def _on_chat_open(self) -> None:
-        """Shrink cat to 32px and dock when chat window opens (spec 2.1)."""
+        """Shrink cat to 32px and dock beside the chat window (spec 2.1,
+        user-requested: must stay attached to the window, not drift apart)."""
         if self._chat_open:
             return
         self._chat_open = True
@@ -382,7 +401,8 @@ class ClaudeCat:
         self.cat_size.set(32)
         self._apply_look()
         self._sync_usage_status()
-        logger.info('chat opened, cat shrunk to 32px')
+        self._dock_tick()
+        logger.info('chat opened, cat shrunk to 32px and docking')
 
     def _on_chat_close(self) -> None:
         """Restore cat to original size when chat window closes."""
@@ -393,7 +413,38 @@ class ClaudeCat:
             self.cat_size.set(self._pre_chat_size)
         self._pre_chat_size = None
         self._apply_look()
+        # Chatting doesn't touch the cat itself, so the idle-sleep timer
+        # (P1.5-4) kept aging the whole time; _dock_tick() staved that off
+        # while open, but reset explicitly too so closing never starts
+        # already-idle. (User-reported: cat sprinted right as chat closed -
+        # that was real usage% revealed after an idle-sleep freeze during
+        # a long chat, not actually a bug in the speed logic itself.)
+        self._last_interact = time.time()
         logger.info('chat closed, cat restored')
+
+    def _dock_tick(self) -> None:
+        """While chat is open, keep the cat glued to the chat window's
+        current position (spec 2.1 originally pinned once and let the
+        window drift away; re-scoped per user request to track it)."""
+        if not self._chat_open:
+            return
+        from chat import window as chatwin
+        geo = chatwin.get_geometry()
+        if geo is not None:
+            wx, wy, ww, _wh = geo
+            sw = self.root.winfo_screenwidth()
+            cx = wx - self.w - 4
+            if cx < 0:   # window hugs the left edge - dock on the right instead
+                cx = min(wx + ww + 4, sw - self.w)
+            # 對齊視窗底部（大約是輸入區旁邊），預留一點邊距
+            cy = max(0, wy + _wh - self.h - 15)
+            if (cx, cy) != (self.root.winfo_x(), self.root.winfo_y()):
+                self.root.geometry(f'+{cx}+{cy}')
+                self._place_badge()
+        # Chat counts as "attended" - don't let the idle-sleep timer
+        # (P1.5-4) creep up just because no one is clicking the cat itself.
+        self._last_interact = time.time()
+        self.root.after(400, self._dock_tick)
 
     def _sync_usage_status(self) -> None:
         """Inject current usage into chat system prompt (spec 2.2)."""
@@ -514,6 +565,9 @@ class ClaudeCat:
         return self.usage_pct
 
     def _status_text(self) -> str:
+        """Short status line for the menu's top (disabled) entry - same
+        compact format as the badge, so the menu window doesn't stretch
+        wide with a long sentence (spec-adjacent, user-reported)."""
         if not self._monitor_active():
             return '用量監控:OFF'
         error = self._effective_error()
@@ -522,15 +576,12 @@ class ClaudeCat:
             return f'! {error}'
         if usage is None:
             return 'Fetching usage...'
-        text = f'Session: {usage:.0f}%'
+        text = f'{usage:.0f}%'
+        if self.weekly_pct is not None:
+            text += f' | Week {self.weekly_pct:.0f}%'
         reset = self._to_local_hhmm(self.resets_at)
         if reset:
-            text += f'  (resets {reset})'
-        if self.weekly_pct is not None:
-            text += f'  |  Week: {self.weekly_pct:.0f}%'
-            weekly_reset = self._to_local_hhmm(self.weekly_resets_at, with_date=True)
-            if weekly_reset:
-                text += f' (resets {weekly_reset})'
+            text += f' ({reset})'
         return text
 
     @staticmethod

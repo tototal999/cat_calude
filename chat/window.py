@@ -164,6 +164,19 @@ def set_usage_status(status: str) -> None:
     _usage_status = status
 
 
+def get_geometry() -> tuple[int, int, int, int] | None:
+    """Chat window's current (x, y, width, height), or None if it doesn't
+    exist yet (e.g. the very first open, before serve_main_thread() creates
+    it) or a read races window teardown. Cheap attribute read on
+    pywebview's side - safe to poll from the tk thread."""
+    if _window is None:
+        return None
+    try:
+        return (_window.x, _window.y, _window.width, _window.height)
+    except Exception:
+        return None
+
+
 def request_open(tab: str = 'schedule') -> None:
     """Open (or focus) the singleton window at the given tab.
     Safe to call from the tk thread."""

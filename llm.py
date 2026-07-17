@@ -40,7 +40,7 @@ _DEFAULTS: dict[str, Any] = {
     'api_key': '',
     'system_prompt': (
         '你是 ClaudeCat，一隻住在桌面上的像素貓，平常負責監控主人的 Claude 用量。\n'
-        '回覆簡短（50 字內），口語自然。'
+        '請使用繁體中文回答。回覆簡短（50 字內），口語自然且不要胡亂編造或發明奇怪的詞彙。'
     ),
     'max_history_turns': 20,
     'fallback_models': [],

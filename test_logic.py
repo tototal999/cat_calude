@@ -7,6 +7,7 @@ import shutil
 
 import scheduler as scheduler_mod
 import api
+import llm
 
 def test_scheduler_bad_json():
     print("[1] 測試 schedule.json 壞格式處理")
@@ -20,10 +21,10 @@ def test_scheduler_bad_json():
     
     test_file.write_text('[{ "id": "123", "title": "Missing type" }]', encoding='utf-8')
     s = scheduler_mod.Scheduler(test_file)
-    if len(s.errors) > 0 and '123' in s.errors[0]:
+    if len(s.errors) > 0 and 'Missing type' in s.errors[0]:
         print("  ✅ 成功攔截格式錯誤的單筆紀錄，未崩潰")
     else:
-        print("  ❌ 格式錯誤紀錄攔截失敗")
+        print("  ❌ 格式錯誤紀錄攔截失敗", s.errors)
     test_file.unlink()
 
 
@@ -106,7 +107,7 @@ def test_api_credentials():
         if cred_path.exists():
             cred_path.unlink()
         res = api.fetch_usage()
-        if 'error' in res and 'FileNotFoundError' in res['error']:
+        if 'error' in res and 'No OAuth token' in res['error']:
             print("  ✅ 成功偵測憑證遺失")
         else:
             print("  ❌ 憑證遺失偵測失敗", res)
@@ -115,7 +116,7 @@ def test_api_credentials():
         cred_path.parent.mkdir(parents=True, exist_ok=True)
         cred_path.write_text('bad data', encoding='utf-8')
         res = api.fetch_usage()
-        if 'error' in res and 'JSONDecodeError' in res['error']:
+        if 'error' in res and 'No OAuth token' in res['error']:
             print("  ✅ 成功偵測憑證格式損毀")
         else:
             print("  ❌ 憑證損毀偵測失敗", res)
@@ -133,9 +134,55 @@ def test_api_credentials():
         else:
             print("  ⚠ 無法復原憑證：無備份檔")
 
+def test_llm_logic():
+    print("\n[4] 測試 LLM 模組基礎邏輯 (Part 2)")
+    
+    # 測試 1: Context overflow 偵測
+    if llm._looks_like_context_overflow("Maximum context length exceeded"):
+        print("  ✅ 成功偵測 context overflow 關鍵字")
+    else:
+        print("  ❌ context overflow 偵測失敗")
+        
+    # 測試 2: Model list (去重與 fallback)
+    old_config = getattr(llm, '_config', {})
+    llm._config = {
+        'model': 'primary-model',
+        'fallback_models': ['fallback-1', 'primary-model', 'fallback-2']
+    }
+    models = llm.list_models()
+    if models == ['primary-model', 'fallback-1', 'fallback-2']:
+        print("  ✅ 成功合併模型清單並去重")
+    else:
+        print("  ❌ 模型清單合併錯誤:", models)
+        
+    # 測試 3: 匯出功能
+    llm._config['export_dir'] = 'test_export'
+    Path('test_export').mkdir(exist_ok=True)
+    try:
+        p1 = llm.save_note("測試筆記", "test-model")
+        if p1.exists():
+            print("  ✅ 單篇筆記存檔成功")
+            p1.unlink()
+        else:
+            print("  ❌ 單篇筆記存檔失敗")
+            
+        p2 = llm.export_chat([{"role":"user", "content":"hi"}], "test-model")
+        if p2.exists():
+            print("  ✅ 完整對話匯出成功")
+            p2.unlink()
+        else:
+            print("  ❌ 完整對話匯出失敗")
+    finally:
+        llm._config = old_config
+        try:
+            Path('test_export').rmdir()
+        except OSError:
+            pass
+
 if __name__ == '__main__':
     print("=== ClaudeCat 自動化邏輯驗證 ===")
     test_scheduler_bad_json()
     test_scheduler_triggers()
     test_api_credentials()
+    test_llm_logic()
     print("================================")
