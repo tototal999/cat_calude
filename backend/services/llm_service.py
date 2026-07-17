@@ -47,6 +47,7 @@ _DEFAULTS: dict[str, Any] = {
     'export_dir': '',
     'debug_log': False,
     'max_file_chars': 50000,
+    'max_file_bytes': 10 * 1024 * 1024,
 }
 
 _config: dict[str, Any] = {}
@@ -142,6 +143,11 @@ def system_prompt() -> str:
 def max_file_chars() -> int:
     n = _get('max_file_chars')
     return int(n) if isinstance(n, (int, float)) and n > 0 else 50000
+
+
+def max_file_bytes() -> int:
+    n = _get('max_file_bytes')
+    return int(n) if isinstance(n, (int, float)) and n > 0 else 10 * 1024 * 1024
 
 
 def chat(messages: list[dict[str, str]],

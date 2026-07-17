@@ -82,3 +82,19 @@ pyinstaller ClaudeCat.spec --clean -y
   }
 }
 ```
+
+## 安全性與效能
+
+- 聊天訊息、對話標題與排程內容會先轉義再顯示，避免 HTML 被執行。
+- 對話 session 僅接受 UUID，避免透過路徑名稱存取 sessions 目錄外的檔案。
+- 開發環境的附件與 PPT 轉換會直接啟動 `worker.py`，不再載入完整的桌面程式。
+- 附件預設限制為 10 MiB 與 50,000 個字元；可在 `%LOCALAPPDATA%\\ClaudeCat\\config.json` 的 `llm` 區塊設定：
+
+```json
+{
+  "llm": {
+    "max_file_bytes": 10485760,
+    "max_file_chars": 50000
+  }
+}
+```

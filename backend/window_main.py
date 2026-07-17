@@ -53,8 +53,6 @@ def init(scheduler, on_chat_open=None, on_chat_close=None) -> None:
     _current_model = llm.current_model()
 
 
-from backend.routes.api import JsApi
-
 def _build_system_prompt() -> str:
     """Dynamic system prompt with usage status injection (spec 2.2)."""
     base = llm.system_prompt()
@@ -140,6 +138,7 @@ def serve_main_thread() -> None:
     _open_evt.wait()
     if _quitting:
         return
+    from backend.routes.api import JsApi
     _window = webview.create_window(
         'ClaudeCat', str(HTML_PATH), js_api=JsApi(),
         width=560, height=560)

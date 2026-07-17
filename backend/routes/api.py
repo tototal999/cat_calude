@@ -10,6 +10,30 @@ import webview
 
 import backend.window_main as wm
 
+
+def _session_path(session_id):
+    """Return the session file for a canonical UUID, or None for invalid input."""
+    if not isinstance(session_id, str):
+        return None
+    try:
+        if str(uuid.UUID(session_id)) != session_id.lower():
+            return None
+    except (ValueError, AttributeError):
+        return None
+    return settings.SESSIONS_DIR / f"{session_id}.json"
+
+
+def _file_worker_command(path, max_chars):
+    if getattr(sys, 'frozen', False):
+        return [sys.executable, '--worker', path, str(max_chars)]
+    return [sys.executable, str(Path(__file__).parents[2] / 'worker.py'), path, str(max_chars)]
+
+
+def _ppt_worker_command(target_path, template_path):
+    if getattr(sys, 'frozen', False):
+        return [sys.executable, '--ppt', target_path, template_path]
+    return [sys.executable, str(Path(__file__).parents[2] / 'worker.py'), '--ppt', target_path, template_path]
+
 class JsApi:
     """Bridge for chat.html. Schedule edits are save-on-change.
     Chat methods run LLM calls in threads to avoid blocking the UI."""
@@ -77,8 +101,8 @@ class JsApi:
         return sessions
 
     def load_session(self, session_id):
-        path = settings.LOG_DIR / 'sessions' / f"{session_id}.json"
-        if not path.exists():
+        path = _session_path(session_id)
+        if path is None or not path.exists():
             return {'error': 'Session not found'}
         try:
             with open(path, 'r', encoding='utf-8') as f:
@@ -92,7 +116,9 @@ class JsApi:
             return {'error': str(e)}
 
     def delete_session(self, session_id):
-        path = settings.LOG_DIR / 'sessions' / f"{session_id}.json"
+        path = _session_path(session_id)
+        if path is None:
+            return {'error': 'Session not found'}
         if path.exists():
             try:
                 path.unlink()
@@ -119,12 +145,6 @@ class JsApi:
         target_path = result[0]
         
         try:
-            cmd = [sys.executable]
-            if not getattr(sys, 'frozen', False):
-                import __main__
-                main_file = getattr(__main__, '__file__', 'cat.py')
-                cmd.append(main_file)
-                
             if getattr(sys, 'frozen', False):
                 exe_dir = Path(sys.executable).parent
             else:
@@ -136,10 +156,10 @@ class JsApi:
                 template_path = settings.LOG_DIR / 'template.pptx'
                 
             template_arg = str(template_path) if template_path.exists() else ""
-            cmd.extend(['--ppt', target_path, template_arg])
+            cmd = _ppt_worker_command(target_path, template_arg)
             
             creationflags = subprocess.CREATE_NO_WINDOW if sys.platform == 'win32' else 0
-            proc = subprocess.run(cmd, input=text, capture_output=True, text=True, encoding='utf-8', creationflags=creationflags)
+            proc = subprocess.run(cmd, input=text, capture_output=True, text=True, encoding='utf-8', creationflags=creationflags, timeout=120)
             
             if proc.returncode != 0:
                 return {'error': f'PPT 轉檔失敗: {proc.stderr}'}
@@ -153,22 +173,22 @@ class JsApi:
         if attached_file:
             try:
                 p = Path(attached_file)
-                cmd = [sys.executable]
-                if not getattr(sys, 'frozen', False):
-                    import __main__
-                    main_file = getattr(__main__, '__file__', 'cat.py')
-                    cmd.append(main_file)
-                cmd.extend(['--worker', str(p)])
+                if not p.is_file():
+                    return {'error': 'Selected file is unavailable'}
+                if p.stat().st_size > llm.max_file_bytes():
+                    return {'error': f'File is larger than the {llm.max_file_bytes()}-byte limit'}
+
+                max_chars = llm.max_file_chars()
+                cmd = _file_worker_command(str(p), max_chars)
                 
                 creationflags = subprocess.CREATE_NO_WINDOW if sys.platform == 'win32' else 0
-                proc = subprocess.run(cmd, capture_output=True, text=True, encoding='utf-8', creationflags=creationflags)
+                proc = subprocess.run(cmd, capture_output=True, text=True, encoding='utf-8', creationflags=creationflags, timeout=60)
                 
                 if proc.returncode != 0:
                     return {'error': f'Worker 處理失敗: {proc.stderr}'}
                     
                 file_content = proc.stdout
                 
-                max_chars = llm.max_file_chars()
                 if len(file_content) > max_chars:
                     return {'error': f'檔案內容過長 ({len(file_content)} 字 / 上限 {max_chars} 字)，請先縮減資料或調整 config.json 再上傳。'}
                 

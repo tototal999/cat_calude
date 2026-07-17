@@ -4,6 +4,7 @@ let _sending = false;
 let _attachedFile = null;
 let _currentSessionId = null;
 let _timerId = null;
+let _editingEnabled = true;
 
 // Fake Prompts Library for "/"
 const PROMPTS = [
@@ -12,6 +13,12 @@ const PROMPTS = [
   {title: 'Summarize', desc: 'Provide a brief summary of the text.', content: 'Please provide a brief summary of the following text:\n\n'}
 ];
 let promptSelectedIndex = 0;
+
+function escapeHtml(value) {
+  const el = document.createElement('div');
+  el.textContent = String(value);
+  return el.innerHTML;
+}
 
 function showTab(t) {
   document.getElementById('page-chat').classList.remove('active');
@@ -76,7 +83,7 @@ function loadSessions() {
     sessions.forEach(s => {
       const btn = document.createElement('button');
       btn.className = 'nav-item' + (s.id === _currentSessionId ? ' active' : '');
-      btn.innerHTML = `<span>💬 ${s.title}</span><span class="del-btn" title="Delete">🗑️</span>`;
+      btn.innerHTML = `<span>💬 ${escapeHtml(s.title)}</span><span class="del-btn" title="Delete">🗑️</span>`;
       btn.onclick = (e) => {
         if (e.target.closest('.del-btn')) {
           e.stopPropagation();
@@ -334,7 +341,7 @@ function renderMarkdownLite(text, container) {
       if (parts[i]) {
         const div = document.createElement('div');
         // Simple bold rendering
-        let t = parts[i].replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
+        let t = escapeHtml(parts[i]).replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
         div.innerHTML = t.replace(/\n/g, '<br>');
         div.style.marginBottom = '8px';
         container.appendChild(div);
@@ -347,7 +354,7 @@ function renderMarkdownLite(text, container) {
       
       const header = document.createElement('div');
       header.className = 'code-header';
-      header.innerHTML = `<span>${lang}</span>`;
+      header.innerHTML = `<span>${escapeHtml(lang)}</span>`;
       
       const copyCodeBtn = document.createElement('button');
       copyCodeBtn.innerHTML = '📋 Copy Code';
@@ -397,7 +404,7 @@ function submitForm() {
     title: document.getElementById('f-title').value.trim(),
     type: t,
     lead_min: parseInt(document.getElementById('f-lead').value || '0', 10),
-    enabled: true,
+    enabled: _editingEnabled,
   };
   if (t === 'weekly') item.day = document.getElementById('f-day').value;
   if (t !== 'hourly') item.time = document.getElementById('f-time').value;
@@ -414,7 +421,7 @@ function renderSchedule(data) {
     const tr = document.createElement('tr');
     tr.className = 'rowline';
     tr.innerHTML = `<td><input type="checkbox" ${it.enabled ? 'checked' : ''}></td>
-      <td>${it.title}</td><td>${it.type} ${it.time || ''}</td>
+      <td>${escapeHtml(it.title)}</td><td>${escapeHtml(it.type)} ${escapeHtml(it.time || '')}</td>
       <td><button class="del">Delete</button></td>`;
     tr.querySelector('input').onclick = (e) => {
       e.stopPropagation();
@@ -429,6 +436,11 @@ function renderSchedule(data) {
       document.getElementById('f-id').value = it.id;
       document.getElementById('f-title').value = it.title;
       document.getElementById('f-type').value = it.type;
+      document.getElementById('f-lead').value = it.lead_min;
+      document.getElementById('f-day').value = it.day || 'MO';
+      document.getElementById('f-time').value = it.time || '09:00';
+      document.getElementById('f-minute').value = it.minute ?? 0;
+      _editingEnabled = it.enabled;
       syncFields();
     };
     tb.appendChild(tr);
@@ -438,6 +450,7 @@ function resetForm() {
   document.getElementById('f-id').value = '';
   document.getElementById('f-title').value = '';
   document.getElementById('f-msg').innerText = '';
+  _editingEnabled = true;
 }
 
 window.addEventListener('pywebviewready', () => {

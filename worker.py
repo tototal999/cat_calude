@@ -2,7 +2,11 @@ import sys
 from pathlib import Path
 import json
 
-def main(filepath_str):
+for _stream in (sys.stdout, sys.stderr):
+    if _stream is not None and hasattr(_stream, 'reconfigure'):
+        _stream.reconfigure(encoding='utf-8', errors='replace')
+
+def main(filepath_str, max_chars=50000):
     try:
         p = Path(filepath_str)
         if not p.exists():
@@ -11,10 +15,14 @@ def main(filepath_str):
             
         if p.suffix.lower() in ('.xlsx', '.xls'):
             import pandas as pd
-            df = pd.read_excel(p)
-            print(df.to_csv(index=False), end='')
+            df = pd.read_excel(p, nrows=10000)
+            content = df.to_csv(index=False)
         else:
-            print(p.read_text(encoding='utf-8'), end='')
+            with p.open('r', encoding='utf-8') as source:
+                content = source.read(max_chars + 1)
+        if len(content) > max_chars:
+            raise ValueError(f'File content exceeds the {max_chars}-character limit')
+        print(content, end='')
     except Exception as e:
         print(f"Worker 解析失敗: {e}", file=sys.stderr)
         sys.exit(1)
@@ -99,6 +107,8 @@ def generate_ppt(output_path_str, template_path_str=None):
                 notes_slide = slide.notes_slide
                 notes_tf = notes_slide.notes_text_frame
                 notes_tf.text = '\n'.join(notes)
+
+        prs.save(output_path_str)
                 
         if sys.stdout is None:
             import os
@@ -113,3 +123,16 @@ def generate_ppt(output_path_str, template_path_str=None):
         else:
             print(msg, file=sys.stderr)
         sys.exit(1)
+
+
+if __name__ == '__main__':
+    if len(sys.argv) < 2:
+        print('Usage: worker.py <file> [max_chars] | --ppt <output> [template]', file=sys.stderr)
+        sys.exit(2)
+    if sys.argv[1] == '--ppt':
+        if len(sys.argv) < 3:
+            print('Missing PowerPoint output path', file=sys.stderr)
+            sys.exit(2)
+        generate_ppt(sys.argv[2], sys.argv[3] if len(sys.argv) > 3 and sys.argv[3] else None)
+    else:
+        main(sys.argv[1], int(sys.argv[2]) if len(sys.argv) > 2 else 50000)

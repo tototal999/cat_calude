@@ -805,7 +805,8 @@ if __name__ == '__main__':
     if len(sys.argv) > 2:
         if sys.argv[1] == '--worker':
             import worker
-            worker.main(sys.argv[2])
+            max_chars = int(sys.argv[3]) if len(sys.argv) > 3 else 50000
+            worker.main(sys.argv[2], max_chars)
             sys.exit(0)
         elif sys.argv[1] == '--ppt':
             import worker

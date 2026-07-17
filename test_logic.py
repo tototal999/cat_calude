@@ -1,188 +1,73 @@
 import json
-import time
+import tempfile
+import unittest
 from datetime import datetime, timedelta
 from pathlib import Path
-import os
-import shutil
+from unittest.mock import patch
 
-import scheduler as scheduler_mod
 import api
-import llm
-
-def test_scheduler_bad_json():
-    print("[1] 測試 schedule.json 壞格式處理")
-    test_file = Path('test_schedule.json')
-    test_file.write_text('{"bad json', encoding='utf-8')
-    s = scheduler_mod.Scheduler(test_file)
-    if len(s.errors) > 0 and '解析失敗' in s.errors[0]:
-        print("  ✅ 成功攔截壞格式 JSON，未崩潰")
-    else:
-        print("  ❌ 壞格式攔截失敗")
-    
-    test_file.write_text('[{ "id": "123", "title": "Missing type" }]', encoding='utf-8')
-    s = scheduler_mod.Scheduler(test_file)
-    if len(s.errors) > 0 and 'Missing type' in s.errors[0]:
-        print("  ✅ 成功攔截格式錯誤的單筆紀錄，未崩潰")
-    else:
-        print("  ❌ 格式錯誤紀錄攔截失敗", s.errors)
-    test_file.unlink()
+from backend.routes.api import _session_path
+from backend.services import llm_service as llm
+import scheduler
 
 
-def test_scheduler_triggers():
-    print("\n[2] 測試排程觸發邏輯 (daily / weekly / hourly)")
-    test_file = Path('test_schedule.json')
-    now = datetime.now()
-    
-    # 建立 2 分鐘後的 daily，提前 1 分鐘
-    t2 = now + timedelta(minutes=2)
-    s_time = t2.strftime('%H:%M')
-    
-    # 建立目前分鐘的 hourly
-    s_min = now.minute
-    
-    data = [
-        {
-            "id": "t1", "title": "Daily Test", "type": "daily",
-            "time": s_time, "lead_min": 1, "enabled": True
-        },
-        {
-            "id": "t2", "title": "Hourly Test", "type": "hourly",
-            "minute": s_min, "lead_min": 0, "enabled": True
-        },
-        {
-            "id": "t3", "title": "Disabled", "type": "daily",
-            "time": s_time, "lead_min": 1, "enabled": False
-        }
-    ]
-    test_file.write_text(json.dumps(data), encoding='utf-8')
-    s = scheduler_mod.Scheduler(test_file)
-    
-    # 模擬 1 分鐘後 (應該觸發 daily 的提前卡)
-    fake_now_1m = now + timedelta(minutes=1)
-    popups = s.tick(fake_now_1m)
-    found_lead = any(p[0]['id'] == 't1' and p[1] == 'lead' for p in popups)
-    if found_lead:
-        print("  ✅ 成功觸發 1 分鐘前提前卡 (daily)")
-    else:
-        print("  ❌ 提前卡觸發失敗")
-        
-    # 模擬 2 分鐘後 (應該觸發 daily 的正點卡)
-    fake_now_2m = now + timedelta(minutes=2)
-    popups = s.tick(fake_now_2m)
-    found_ontime = any(p[0]['id'] == 't1' and p[1] == 'ontime' for p in popups)
-    if found_ontime:
-        print("  ✅ 成功觸發正點卡 (daily)")
-    else:
-        print("  ❌ 正點卡觸發失敗")
-        
-    # 確認 Disabled 沒被觸發
-    found_disabled = any(p[0]['id'] == 't3' for p in popups)
-    if not found_disabled:
-        print("  ✅ 成功忽略未啟用 (enabled=false) 的排程")
-    else:
-        print("  ❌ 未啟用的排程被觸發了")
-        
-    # 確認 Hourly 觸發
-    popups = s.tick(now)
-    found_hourly = any(p[0]['id'] == 't2' for p in popups)
-    if found_hourly:
-        print("  ✅ 成功觸發 hourly 排程")
-    else:
-        print("  ❌ Hourly 觸發失敗")
-        
-    test_file.unlink()
+class SchedulerTests(unittest.TestCase):
+    def test_invalid_json_is_reported(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'schedule.json'
+            path.write_text('{bad json', encoding='utf-8')
+            result = scheduler.Scheduler(path)
+            self.assertTrue(result.errors)
+            self.assertEqual(result.items, [])
+
+    def test_daily_lead_and_ontime_fire_once(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'schedule.json'
+            now = datetime(2026, 7, 17, 9, 0)
+            path.write_text(json.dumps([{
+                'id': 'daily-test', 'title': 'Daily Test', 'type': 'daily',
+                'time': '09:02', 'lead_min': 1, 'enabled': True,
+            }]), encoding='utf-8')
+            result = scheduler.Scheduler(path)
+
+            self.assertEqual([(item['id'], kind) for item, kind in result.tick(now + timedelta(minutes=1))],
+                             [('daily-test', 'lead')])
+            self.assertEqual(result.tick(now + timedelta(minutes=1)), [])
+            self.assertEqual([(item['id'], kind) for item, kind in result.tick(now + timedelta(minutes=2))],
+                             [('daily-test', 'ontime')])
 
 
-def test_api_credentials():
-    print("\n[3] 測試 API 憑證毀損與恢復")
-    cred_path = Path.home() / '.claude' / '.credentials.json'
-    backup_path = Path.home() / '.claude' / '.credentials.json.bak'
-    
-    # 備份原始憑證
-    if cred_path.exists():
-        shutil.copy(cred_path, backup_path)
-    
-    try:
-        # 測試 1：沒有憑證檔
-        if cred_path.exists():
-            cred_path.unlink()
-        res = api.fetch_usage()
-        if 'error' in res and 'No OAuth token' in res['error']:
-            print("  ✅ 成功偵測憑證遺失")
-        else:
-            print("  ❌ 憑證遺失偵測失敗", res)
-            
-        # 測試 2：憑證內容損毀
-        cred_path.parent.mkdir(parents=True, exist_ok=True)
-        cred_path.write_text('bad data', encoding='utf-8')
-        res = api.fetch_usage()
-        if 'error' in res and 'No OAuth token' in res['error']:
-            print("  ✅ 成功偵測憑證格式損毀")
-        else:
-            print("  ❌ 憑證損毀偵測失敗", res)
-            
-    finally:
-        # 復原憑證
-        if backup_path.exists():
-            shutil.copy(backup_path, cred_path)
-            backup_path.unlink()
-            res = api.fetch_usage()
-            if 'error' not in res:
-                print("  ✅ 憑證復原後，API 呼叫成功恢復正常")
-            else:
-                print("  ⚠ 憑證復原後 API 仍回傳錯誤 (可能 token 過期或 rate limit)")
-        else:
-            print("  ⚠ 無法復原憑證：無備份檔")
+class ApiTests(unittest.TestCase):
+    def test_read_access_token_uses_configured_credentials_path(self):
+        with tempfile.TemporaryDirectory() as directory:
+            credentials = Path(directory) / '.credentials.json'
+            credentials.write_text(json.dumps({
+                'claudeAiOauth': {'accessToken': 'test-token'},
+            }), encoding='utf-8')
+            with patch.object(api, 'CLAUDE_CREDENTIALS', credentials):
+                self.assertEqual(api.read_access_token(), 'test-token')
 
-def test_llm_logic():
-    print("\n[4] 測試 LLM 模組基礎邏輯 (Part 2)")
-    
-    # 測試 1: Context overflow 偵測
-    if llm._looks_like_context_overflow("Maximum context length exceeded"):
-        print("  ✅ 成功偵測 context overflow 關鍵字")
-    else:
-        print("  ❌ context overflow 偵測失敗")
-        
-    # 測試 2: Model list (去重與 fallback)
-    old_config = getattr(llm, '_config', {})
-    llm._config = {
-        'model': 'primary-model',
-        'fallback_models': ['fallback-1', 'primary-model', 'fallback-2']
-    }
-    models = llm.list_models()
-    if models == ['primary-model', 'fallback-1', 'fallback-2']:
-        print("  ✅ 成功合併模型清單並去重")
-    else:
-        print("  ❌ 模型清單合併錯誤:", models)
-        
-    # 測試 3: 匯出功能
-    llm._config['export_dir'] = 'test_export'
-    Path('test_export').mkdir(exist_ok=True)
-    try:
-        p1 = llm.save_note("測試筆記", "test-model")
-        if p1.exists():
-            print("  ✅ 單篇筆記存檔成功")
-            p1.unlink()
-        else:
-            print("  ❌ 單篇筆記存檔失敗")
-            
-        p2 = llm.export_chat([{"role":"user", "content":"hi"}], "test-model")
-        if p2.exists():
-            print("  ✅ 完整對話匯出成功")
-            p2.unlink()
-        else:
-            print("  ❌ 完整對話匯出失敗")
-    finally:
-        llm._config = old_config
-        try:
-            Path('test_export').rmdir()
-        except OSError:
-            pass
+    def test_session_path_rejects_traversal(self):
+        self.assertIsNone(_session_path('../config'))
+        self.assertIsNotNone(_session_path('550e8400-e29b-41d4-a716-446655440000'))
+
+
+class LlmTests(unittest.TestCase):
+    def test_model_list_deduplicates_primary_and_fallbacks(self):
+        with patch.object(llm, '_config', {
+            'model': 'primary',
+            'fallback_models': ['fallback', 'primary', 'fallback'],
+        }):
+            self.assertEqual(llm.list_models(), ['primary', 'fallback'])
+
+    def test_context_overflow_detection(self):
+        self.assertTrue(llm._looks_like_context_overflow('Maximum context length exceeded'))
+        self.assertFalse(llm._looks_like_context_overflow('Authentication failed'))
+
+    def test_file_size_limit_has_a_safe_default(self):
+        with patch.object(llm, '_config', {}):
+            self.assertEqual(llm.max_file_bytes(), 10 * 1024 * 1024)
+
 
 if __name__ == '__main__':
-    print("=== ClaudeCat 自動化邏輯驗證 ===")
-    test_scheduler_bad_json()
-    test_scheduler_triggers()
-    test_api_credentials()
-    test_llm_logic()
-    print("================================")
+    unittest.main()
