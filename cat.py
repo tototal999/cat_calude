@@ -8,9 +8,14 @@ UpdateLayeredWindow).  The cat's animation speed maps to the 5-hour
 session utilization fetched from the Anthropic OAuth usage API (via
 api.py, borrowed from jens-duttke/usage-monitor-for-claude, MIT).
 
-Two independent loops:
+Loops:
 - Animation loop: swaps frames every N ms (N depends on usage %).
-- Poll loop:      fetches usage every POLL_INTERVAL seconds.
+- Poll loop:      fetches usage every POLL_INTERVAL seconds (可由選單真停).
+- Schedule tick:  every 30s on the tk after() loop (scheduler.py, Part 1).
+
+Threading (spec 1.2, verified by P1-0): the pywebview singleton window owns
+the MAIN thread (chat/window.py); this tkinter cat runs in a background
+thread started from __main__.
 
 Run:  python cat.py        (Windows, Python 3.10+, `pip install requests`)
 Quit: right-click the cat -> Quit
@@ -36,6 +41,8 @@ from datetime import datetime
 from pathlib import Path
 
 import api
+import llm
+import scheduler as scheduler_mod
 import spritecat
 import winalpha
 
@@ -77,6 +84,11 @@ POLL_CHOICES = (180, 300)    # right-click menu poll interval options; the endpo
 LOG_DIR = Path(os.environ.get('LOCALAPPDATA') or Path.home()) / 'ClaudeCat'
 LOG_FILE = LOG_DIR / 'claudecat.log'
 CONFIG_FILE = LOG_DIR / 'config.json'   # persisted user settings (skin/size/...)
+# Schedule data lives beside config (NOT the exe dir, which may be read-only);
+# spec's file tree shows the source layout, this is the runtime location.
+SCHEDULE_FILE = LOG_DIR / 'schedule.json'
+ALERT_BOOST_SECS = 3        # cat speeds up this long when a schedule fires
+CARD_AUTOCLOSE_MS = 60_000  # popup cards self-dismiss after 60s
 
 
 def _setup_logging() -> logging.Logger:
@@ -135,15 +147,27 @@ class ClaudeCat:
         self.facing_right = tk.BooleanVar(value=bool(cfg.get('facing_right', False)))
         self.poll_interval = tk.IntVar(value=poll)
         self.current_skin = tk.StringVar(value=skin)
+        um = cfg.get('usage_monitor', {})
+        self.monitor_enabled = tk.BooleanVar(
+            value=bool(um.get('enabled', True)) if isinstance(um, dict) else True)
         # 'live' | 'error' | 'full': lets you preview the sleep/frozen poses
         # from the right-click menu instead of waiting for the real thing.
         # Deliberately not persisted - a forgotten forced state would look
         # like a permanently broken cat on the next start.
         self.debug_state = tk.StringVar(value='live')
+        self._chat_open = False       # True while chat window is visible
+        self._pre_chat_size: int | None = None  # size before shrink
 
         self.root.wm_attributes('-topmost', self.topmost.get())
         self.w = self.h = size
         self._render_cat()
+
+        # Part 1.5 Interactive config
+        self._sleep_min = int(cfg.get('sleep_min', 10))
+        self._deep_sleep_min = int(cfg.get('deep_sleep_min', 12))
+        self._last_interact = time.time()
+        self._drag_start_x = 0
+        self._drag_start_y = 0
 
         # State shared between poll thread and UI loop
         self.usage_pct: float | None = None   # None = not fetched yet
@@ -154,6 +178,24 @@ class ClaudeCat:
         self._frame_idx = 0
         self._refreshing_token = False
 
+        # Monitor availability (spec P1-6): unavailable = no credentials /
+        # token unreadable / 3+ consecutive API failures. Popup fires once
+        # per False->True transition only; recovery is silent.
+        self._consec_failures = 0
+        self.monitor_unavailable = False
+        self._boost_until = 0.0
+
+        # Popup cards may be requested from the poll thread; they are queued
+        # here and materialized on the tk thread by the animation loop.
+        self._pending_cards: list[str] = []
+        self._cards_lock = threading.Lock()
+        self._open_cards: list[tk.Toplevel] = []
+
+        self.scheduler = scheduler_mod.Scheduler(SCHEDULE_FILE)
+        if self.scheduler.errors:
+            self._queue_card(f'排程檔有 {len(self.scheduler.errors)} 筆錯誤,'
+                             f'詳見右鍵選單「排程」')
+
         # Last saved position, clamped on-screen; else bottom-right corner
         sw, sh = self.root.winfo_screenwidth(), self.root.winfo_screenheight()
         x = cfg.get('x', sw - self.w - 40)
@@ -163,6 +205,8 @@ class ClaudeCat:
             x, y = sw - self.w - 40, sh - self.h - 140
         self.root.geometry(f'{self.w}x{self.h}+{x}+{y}')
         self.root.update()  # window must be mapped before we grab its hwnd
+        logger.info('screen=%dx%d requested=(%d,%d) actual=(%d,%d)',
+                    sw, sh, x, y, self.root.winfo_x(), self.root.winfo_y())
         self.canvas = winalpha.LayeredCanvas(self.root.winfo_id(), self.w, self.h)
         self.canvas.draw(self.idle_buffer)
 
@@ -181,24 +225,44 @@ class ClaudeCat:
         self._bind_mouse()
         self._start_poll_thread()
         self._animate()
-        logger.info('started: skin=%s size=%d poll_interval=%d',
-                    self.current_skin.get(), self.w, self.poll_interval.get())
+        self.root.after(2000, self._schedule_tick)
+        logger.info('started: skin=%s size=%d poll_interval=%d monitor=%s',
+                    self.current_skin.get(), self.w, self.poll_interval.get(),
+                    self.monitor_enabled.get())
 
     # ---- UI wiring --------------------------------------------------------
 
     def _bind_mouse(self) -> None:
         for win in (self.root, self.badge_win):
+            win.bind('<Enter>', self._on_hover)
             win.bind('<Button-1>', self._drag_start)
             win.bind('<B1-Motion>', self._drag_move)
+            win.bind('<ButtonRelease-1>', self._drag_release)
             win.bind('<Button-3>', self._menu)
+
+    def _on_hover(self, e: tk.Event) -> None:
+        self._last_interact = time.time()
 
     def _drag_start(self, e: tk.Event) -> None:
         self._dx = e.x_root - self.root.winfo_x()
         self._dy = e.y_root - self.root.winfo_y()
+        self._drag_start_x = e.x_root
+        self._drag_start_y = e.y_root
+        self._last_interact = time.time()
 
     def _drag_move(self, e: tk.Event) -> None:
         self.root.geometry(f'+{e.x_root - self._dx}+{e.y_root - self._dy}')
         self._place_badge()
+        self._last_interact = time.time()
+
+    def _drag_release(self, e: tk.Event) -> None:
+        self._last_interact = time.time()
+        if abs(e.x_root - self._drag_start_x) <= 5 and abs(e.y_root - self._drag_start_y) <= 5:
+            self._on_click()
+
+    def _on_click(self) -> None:
+        """P1.5-2: Click triggers a small random action (brief sprint here)"""
+        self._boost_until = time.time() + 0.3
 
     def _place_badge(self) -> None:
         self.badge_win.update_idletasks()
@@ -215,6 +279,7 @@ class ClaudeCat:
             'poll_interval': self.poll_interval.get(),
             'topmost': self.topmost.get(),
             'show_pct': self.show_pct.get(),
+            'usage_monitor': {'enabled': self.monitor_enabled.get()},
             'x': self.root.winfo_x(),
             'y': self.root.winfo_y(),
         }
@@ -265,6 +330,12 @@ class ClaudeCat:
                           command=self._set_topmost)
         m.add_checkbutton(label='Show usage %', variable=self.show_pct,
                           command=self._save_config)
+        monitor_label = '用量監控（異常）' if (self.monitor_enabled.get()
+                                              and self.monitor_unavailable) else '用量監控'
+        m.add_checkbutton(label=monitor_label, variable=self.monitor_enabled,
+                          command=self._toggle_monitor)
+        m.add_command(label='排程...', command=self._open_schedule)
+        m.add_command(label='交談...', command=self._open_chat)
         size_menu = tk.Menu(m, tearoff=0)
         for s in SIZE_CHOICES:
             size_menu.add_radiobutton(label=f'{s} px', variable=self.cat_size,
@@ -291,6 +362,123 @@ class ClaudeCat:
         m.add_command(label='Show log', command=self._show_log)
         m.add_command(label='Quit', command=self._quit)
         m.tk_popup(e.x_root, e.y_root)
+
+    # ---- Schedule + monitor toggle (Part 1) --------------------------------
+
+    def _open_schedule(self) -> None:
+        from chat import window as chatwin   # lazy: pulls in pywebview
+        chatwin.request_open('schedule')
+
+    def _open_chat(self) -> None:
+        from chat import window as chatwin
+        chatwin.request_open('chat')
+
+    def _on_chat_open(self) -> None:
+        """Shrink cat to 32px and dock when chat window opens (spec 2.1)."""
+        if self._chat_open:
+            return
+        self._chat_open = True
+        self._pre_chat_size = self.cat_size.get()
+        self.cat_size.set(32)
+        self._apply_look()
+        self._sync_usage_status()
+        logger.info('chat opened, cat shrunk to 32px')
+
+    def _on_chat_close(self) -> None:
+        """Restore cat to original size when chat window closes."""
+        if not self._chat_open:
+            return
+        self._chat_open = False
+        if self._pre_chat_size and self._pre_chat_size in SIZE_CHOICES:
+            self.cat_size.set(self._pre_chat_size)
+        self._pre_chat_size = None
+        self._apply_look()
+        logger.info('chat closed, cat restored')
+
+    def _sync_usage_status(self) -> None:
+        """Inject current usage into chat system prompt (spec 2.2)."""
+        from chat import window as chatwin
+        if not self._monitor_active():
+            chatwin.set_usage_status('目前用量監控已關閉，無法提供用量數據。')
+        elif self.error:
+            chatwin.set_usage_status(f'目前用量監控異常：{self.error}')
+        elif self.usage_pct is not None:
+            parts = [f'目前狀態：session 用量 {self.usage_pct:.0f}%']
+            if self.weekly_pct is not None:
+                parts.append(f'weekly {self.weekly_pct:.0f}%')
+            reset = self._to_local_hhmm(self.resets_at)
+            if reset:
+                parts.append(f'重置倒數 {reset}')
+            chatwin.set_usage_status('，'.join(parts) + '。')
+        else:
+            chatwin.set_usage_status('用量數據尚未取得。')
+
+    def _toggle_monitor(self) -> None:
+        self._save_config()
+        if self.monitor_enabled.get():
+            self._poll_once_async()   # turn ON: refresh right away
+        else:
+            # OFF means truly off (spec): no polling, cat at leisure speed,
+            # stale data cleared so nothing can lie on the badge/menu.
+            self.usage_pct = None
+            self.weekly_pct = None
+            self.error = None
+            self.monitor_unavailable = False
+            self._consec_failures = 0
+        logger.info('usage monitor %s', 'ON' if self.monitor_enabled.get() else 'OFF')
+
+    def _schedule_tick(self) -> None:
+        """30s tick on the tk after() loop (spec: no new thread)."""
+        try:
+            for item, kind in self.scheduler.tick(datetime.now()):
+                self._queue_card(scheduler_mod.card_text(item, kind))
+                self._boost_until = time.time() + ALERT_BOOST_SECS
+                logger.info('schedule fired (%s): %s', kind, item.get('title'))
+        except Exception:
+            logger.exception('schedule tick failed')
+        finally:
+            self.root.after(30_000, self._schedule_tick)
+
+    def _queue_card(self, text: str) -> None:
+        """Thread-safe: cards can be requested from the poll thread; the
+        animation loop (tk thread) materializes them."""
+        with self._cards_lock:
+            self._pending_cards.append(text)
+
+    def _drain_cards(self) -> None:
+        with self._cards_lock:
+            pending, self._pending_cards = self._pending_cards, []
+        for text in pending:
+            self._show_card(text)
+
+    def _show_card(self, text: str) -> None:
+        """Popup card near the cat: topmost, click-to-close, 60s auto-close,
+        stacks upward when several are open. tk thread only."""
+        card = tk.Toplevel(self.root)
+        card.overrideredirect(True)
+        card.wm_attributes('-topmost', True)
+        label = tk.Label(card, text=f'🐱 {text}', bg='#2a2a2a', fg='#ffffff',
+                         font=('Segoe UI', 11), padx=14, pady=8,
+                         bd=1, relief='solid')
+        label.pack()
+
+        idx = len(self._open_cards)
+        card.update_idletasks()
+        x = max(10, self.root.winfo_x() + self.w - card.winfo_reqwidth())
+        y = max(10, self.root.winfo_y() - 46 - idx * (card.winfo_reqheight() + 6))
+        card.geometry(f'+{x}+{y}')
+        self._open_cards.append(card)
+
+        def close(_e=None) -> None:
+            if card in self._open_cards:
+                self._open_cards.remove(card)
+            try:
+                card.destroy()
+            except tk.TclError:
+                pass   # already gone (auto-close raced the click)
+
+        label.bind('<Button-1>', close)
+        card.after(CARD_AUTOCLOSE_MS, close)
 
     def _show_log(self) -> None:
         """Show the log in-app: Explorer navigation to AppData\\Local can be
@@ -326,6 +514,8 @@ class ClaudeCat:
         return self.usage_pct
 
     def _status_text(self) -> str:
+        if not self._monitor_active():
+            return '用量監控:OFF'
         error = self._effective_error()
         usage = self._effective_usage()
         if error:
@@ -360,7 +550,9 @@ class ClaudeCat:
             return
         error = self._effective_error()
         usage = self._effective_usage()
-        if error:
+        if not self._monitor_active():
+            state = (' OFF ', '#222222', '#888888')
+        elif error:
             state = (' ! ', '#aa2222', '#ffffff')
         elif usage is None:
             state = ('...', '#222222', '#ffffff')
@@ -383,31 +575,47 @@ class ClaudeCat:
             text, bg, fg = state
             self.badge.configure(text=text, bg=bg, fg=fg)
             self._last_badge_state = state
+            # Text width changed -> re-center under the cat. Rare (once per
+            # poll at most), so no DWM-recomposite concern here.
+            self._place_badge()
         if self.badge_win.state() == 'withdrawn':
             self.badge_win.deiconify()
             self._place_badge()
 
     # ---- Animation loop ---------------------------------------------------
 
+    def _monitor_active(self) -> bool:
+        """Monitor drives poses/speed only when ON - except the Test menu,
+        which may preview any state regardless of the toggle."""
+        return self.monitor_enabled.get() or self.debug_state.get() != 'live'
+
     def _should_sleep(self) -> bool:
-        """Sleep pose wins over the run cycle when the skin has one and the
-        session quota is fully used up (100%). Errors / no data yet still
-        play the normal gentle-default animation - sleep means 'quota is
-        exhausted', not 'can't currently tell what the quota is'."""
-        if not self.sleep_frames:
+        """Sleep pose wins over the run cycle when the session quota is fully used up (100%),
+        or when idle for too long (P1.5-4)."""
+        if not self.sleep_frames or not self._monitor_active():
             return False
         usage = self._effective_usage()
-        return usage is not None and usage >= 100
+        if usage is not None and usage >= 100:
+            return True
+        idle_mins = (time.time() - self._last_interact) / 60
+        if idle_mins >= self._sleep_min:
+            # P1.5-4: currently using sleep frames for both want-to-sleep and deep-sleep stages.
+            return True
+        return False
 
     def _should_show_error_pose(self) -> bool:
         """Error pose (if the skin has one) replaces the gentle default
         animation when there's an error, or no usage data has come in yet."""
-        if not self.error_frames:
+        if not self.error_frames or not self._monitor_active():
             return False
         return bool(self._effective_error()) or self._effective_usage() is None
 
     def _frame_interval(self) -> int | None:
         """Map current usage % to a frame interval (ms), or None if frozen."""
+        if time.time() < self._boost_until:
+            return 80   # schedule alert: brief sprint to catch the eye
+        if not self._monitor_active():
+            return 400  # monitor OFF: fixed leisure pace (spec P1-6)
         error = self._effective_error()
         usage = self._effective_usage()
         if error or usage is None:
@@ -418,6 +626,7 @@ class ClaudeCat:
         return None
 
     def _animate(self) -> None:
+        self._drain_cards()
         self._update_badge()
         if self._should_sleep():
             # Static, not animated: one sleep frame (the first, by filename
@@ -450,8 +659,26 @@ class ClaudeCat:
 
     def _poll_forever(self) -> None:
         while True:
+            if not self.monitor_enabled.get():
+                time.sleep(2)          # OFF = truly no API traffic (spec P1-6)
+                continue
             wait = self._poll_once()
-            time.sleep(wait)
+            deadline = time.time() + wait
+            while time.time() < deadline:
+                time.sleep(2)
+                if not self.monitor_enabled.get():
+                    break              # react to an OFF flip mid-wait
+
+    def _set_unavailable(self, flag: bool, reason: str = '') -> None:
+        """Popup exactly once per available->unavailable transition;
+        recovery is silent (spec: 不洗版)."""
+        if flag and not self.monitor_unavailable:
+            self.monitor_unavailable = True
+            self._queue_card(f'用量監控異常:{reason}')
+            logger.warning('monitor unavailable: %s', reason)
+        elif not flag and self.monitor_unavailable:
+            self.monitor_unavailable = False
+            logger.info('monitor recovered')
 
     def _poll_once(self) -> float:
         """Fetch usage once; update shared state. Returns next wait (s)."""
@@ -460,6 +687,10 @@ class ClaudeCat:
         if 'error' in data:
             self.error = data['error']
             logger.error('poll failed: %s', self.error)
+            self._consec_failures += 1
+            no_token = data['error'] == api.T['no_token']
+            if no_token or self._consec_failures >= 3:
+                self._set_unavailable(True, data['error'])
             if data.get('auth_error'):
                 self._try_refresh_token()
             if data.get('rate_limited'):
@@ -471,11 +702,21 @@ class ClaudeCat:
         if not isinstance(quota, dict) or quota.get('utilization') is None:
             self.error = f'Quota field "{QUOTA_FIELD}" missing in API response'
             logger.error('%s. Fields: %s', self.error, list(data))
+            self._consec_failures += 1
+            if self._consec_failures >= 3:
+                self._set_unavailable(True, self.error)
             return self.poll_interval.get()
 
         was_error = self.error is not None
         self.error = None
-        self.usage_pct = float(quota['utilization'])
+        self._consec_failures = 0
+        self._set_unavailable(False)
+        
+        new_usage = float(quota['utilization'])
+        if self.usage_pct is not None and new_usage != self.usage_pct:
+            self._last_interact = time.time()  # Usage jump wakes up cat (P1.5-4)
+        self.usage_pct = new_usage
+        
         self.resets_at = quota.get('resets_at')
 
         # Weekly quota is display-only (badge/menu): the session quota drives
@@ -490,6 +731,7 @@ class ClaudeCat:
 
         if was_error:
             logger.info('poll recovered: usage=%.0f%%', self.usage_pct)
+        self._sync_usage_status()
         return self.poll_interval.get()
 
     def _try_refresh_token(self) -> None:
@@ -521,8 +763,21 @@ if __name__ == '__main__':
         logger.info('another instance is already running; exiting')
         sys.exit(0)
 
-    try:
-        ClaudeCat().root.mainloop()
-    except Exception:
-        logger.exception('crashed')
-        raise
+    from chat import window as chatwin
+
+    def _run_cat() -> None:
+        try:
+            app = ClaudeCat()
+            llm.init(CONFIG_FILE)
+            chatwin.init(app.scheduler, app._on_chat_open, app._on_chat_close)
+            app.root.mainloop()
+        except Exception:
+            logger.exception('crashed')
+        finally:
+            # Unblock/close the webview side so the main thread can exit.
+            chatwin.shutdown()
+
+    threading.Thread(target=_run_cat, daemon=True).start()
+    # Main thread parks here; opens the singleton webview window on demand
+    # and returns only when the cat has quit (spec 1.2 threading model).
+    chatwin.serve_main_thread()
