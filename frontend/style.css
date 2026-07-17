@@ -1,7 +1,10 @@
 body { font-family: 'Segoe UI', system-ui, -apple-system, sans-serif; margin: 0; background: #343541; color: #ececec; font-size: 15px; height: 100vh; overflow: hidden; }
   
   /* Sidebar */
-  #sidebar { width: 260px; background-color: #202123; display: flex; flex-direction: column; padding: 12px; border-right: 1px solid #333; transition: width 0.3s ease; }
+  #sidebar { width: 260px; min-width: 0; background-color: #202123; display: flex; flex-direction: column; padding: 12px; border-right: 1px solid #333; transition: width 0.25s ease, padding 0.25s ease; overflow: hidden; flex-shrink: 0; }
+  #sidebar.collapsed { width: 0; padding: 0; border-right: none; }
+  #sidebar-resize { width: 4px; cursor: col-resize; background: transparent; flex-shrink: 0; transition: background 0.2s; }
+  #sidebar-resize:hover, #sidebar-resize.dragging { background: #10a37f; }
   .btn-new-chat { background: transparent; border: 1px solid #444; color: #ececec; padding: 12px 14px; border-radius: 6px; cursor: pointer; text-align: left; display: flex; align-items: center; gap: 12px; transition: background 0.2s; font-size: 14px; }
   .btn-new-chat:hover { background: #2A2B32; }
   

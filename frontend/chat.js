@@ -22,8 +22,52 @@ function showTab(t) {
 
 function toggleSidebar() {
   const sb = document.getElementById('sidebar');
-  sb.style.display = sb.style.display === 'none' ? 'flex' : 'none';
+  const handle = document.getElementById('sidebar-resize');
+  sb.classList.toggle('collapsed');
+  if (sb.classList.contains('collapsed')) {
+    handle.style.display = 'none';
+  } else {
+    handle.style.display = '';
+  }
 }
+
+// Sidebar resize drag
+(function() {
+  const handle = document.getElementById('sidebar-resize');
+  if (!handle) return;
+  const sb = document.getElementById('sidebar');
+  let dragging = false;
+  let startX = 0;
+  let startW = 0;
+
+  handle.addEventListener('mousedown', function(e) {
+    dragging = true;
+    startX = e.clientX;
+    startW = sb.offsetWidth;
+    handle.classList.add('dragging');
+    sb.style.transition = 'none';
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+    e.preventDefault();
+  });
+
+  document.addEventListener('mousemove', function(e) {
+    if (!dragging) return;
+    let newW = startW + (e.clientX - startX);
+    if (newW < 140) newW = 140;
+    if (newW > 500) newW = 500;
+    sb.style.width = newW + 'px';
+  });
+
+  document.addEventListener('mouseup', function() {
+    if (!dragging) return;
+    dragging = false;
+    handle.classList.remove('dragging');
+    sb.style.transition = '';
+    document.body.style.cursor = '';
+    document.body.style.userSelect = '';
+  });
+})();
 
 function loadSessions() {
   pywebview.api.list_sessions().then(sessions => {

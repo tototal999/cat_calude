@@ -32,6 +32,13 @@ _on_chat_close = None
 _BASE_DIR = Path(__file__).parent
 HTML_PATH = _BASE_DIR.parent / 'frontend' / 'index.html'
 
+import sys as _sys
+if getattr(_sys, 'frozen', False):
+    _APP_DIR = Path(_sys.executable).parent
+else:
+    _APP_DIR = _BASE_DIR.parent
+ICON_PATH = _APP_DIR / 'claudecat.ico'
+
 # In-memory conversation history (关窗即清, spec 2.2)
 _history: list[dict[str, str]] = []
 _current_model: str = ''
@@ -137,4 +144,5 @@ def serve_main_thread() -> None:
         'ClaudeCat', str(HTML_PATH), js_api=JsApi(),
         width=560, height=560)
     _window.events.closing += _on_closing
-    webview.start()
+    _icon = str(ICON_PATH) if ICON_PATH.exists() else None
+    webview.start(icon=_icon)
