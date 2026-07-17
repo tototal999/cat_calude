@@ -29,6 +29,11 @@ from __future__ import annotations
 
 import ctypes
 import json
+from config import settings
+LOG_DIR = settings.LOG_DIR
+LOG_FILE = settings.LOG_FILE
+CONFIG_FILE = settings.CONFIG_FILE
+SCHEDULE_FILE = settings.SCHEDULE_FILE
 import logging
 import logging.handlers
 import os
@@ -81,18 +86,13 @@ POLL_CHOICES = (180, 300)    # right-click menu poll interval options; the endpo
 
 # The --windowed exe has no console, so print()/stderr vanish silently -
 # everything worth diagnosing goes to this file instead (rotated, 3x512KB).
-LOG_DIR = Path(os.environ.get('LOCALAPPDATA') or Path.home()) / 'ClaudeCat'
-LOG_FILE = LOG_DIR / 'claudecat.log'
-CONFIG_FILE = LOG_DIR / 'config.json'   # persisted user settings (skin/size/...)
 # Schedule data lives beside config (NOT the exe dir, which may be read-only);
 # spec's file tree shows the source layout, this is the runtime location.
-SCHEDULE_FILE = LOG_DIR / 'schedule.json'
 ALERT_BOOST_SECS = 3        # cat speeds up this long when a schedule fires
 CARD_AUTOCLOSE_MS = 60_000  # popup cards self-dismiss after 60s
 
 
 def _setup_logging() -> logging.Logger:
-    LOG_DIR.mkdir(parents=True, exist_ok=True)
     handler = logging.handlers.RotatingFileHandler(
         LOG_FILE, maxBytes=512 * 1024, backupCount=2, encoding='utf-8')
     handler.setFormatter(logging.Formatter('%(asctime)s %(levelname)s %(message)s'))
@@ -105,13 +105,7 @@ def _setup_logging() -> logging.Logger:
 logger = _setup_logging()
 
 
-def _load_config() -> dict:
-    """Read persisted settings; missing/corrupt file just means defaults."""
-    try:
-        data = json.loads(CONFIG_FILE.read_text(encoding='utf-8'))
-        return data if isinstance(data, dict) else {}
-    except (OSError, ValueError):
-        return {}
+
 
 # usage % (upper bound, inclusive) -> frame interval in ms; None = frozen
 SPEED_TABLE = [
@@ -131,7 +125,7 @@ class ClaudeCat:
         self.root.wm_attributes('-topmost', True)
 
         # User-toggleable options (right-click menu), seeded from config.json
-        cfg = _load_config()
+        cfg = _settings.load_config()
         skin = cfg.get('skin', spritecat.DEFAULT_SKIN)
         if skin not in spritecat.list_skins():
             skin = spritecat.DEFAULT_SKIN  # skin folder was renamed/removed
@@ -275,7 +269,7 @@ class ClaudeCat:
         """Merge cat-owned keys into config.json, preserving everything
         else (e.g. llm.py's ``llm`` block) - config.json has more than one
         writer, so this must never be a blind full-file overwrite."""
-        cfg = _load_config()
+        cfg = _settings.load_config()
         cfg.update({
             'skin': self.current_skin.get(),
             'size': self.cat_size.get(),
@@ -294,14 +288,14 @@ class ClaudeCat:
             logger.exception('could not save config')
 
     def _quit(self) -> None:
-        self._save_config()  # position is only captured here, on clean exit
+        self._settings.save_config()  # position is only captured here, on clean exit
         self.root.destroy()
 
     def _set_topmost(self) -> None:
         on = self.topmost.get()
         self.root.wm_attributes('-topmost', on)
         self.badge_win.wm_attributes('-topmost', on)
-        self._save_config()
+        self._settings.save_config()
 
     def _render_cat(self) -> None:
         (self.idle_buffer, self.frame_buffers, self.sleep_frames,
@@ -324,7 +318,7 @@ class ClaudeCat:
             self.canvas = winalpha.LayeredCanvas(self.root.winfo_id(), size, size)
         self.canvas.draw(self.idle_buffer)  # next animate tick takes over
         self._place_badge()
-        self._save_config()
+        self._settings.save_config()
 
     def _menu(self, e: tk.Event) -> None:
         m = tk.Menu(self.root, tearoff=0)
@@ -384,11 +378,11 @@ class ClaudeCat:
     # ---- Schedule + monitor toggle (Part 1) --------------------------------
 
     def _open_schedule(self) -> None:
-        from chat import window as chatwin   # lazy: pulls in pywebview
+        import backend.window_main as chatwin   # lazy: pulls in pywebview
         chatwin.request_open('schedule')
 
     def _open_chat(self) -> None:
-        from chat import window as chatwin
+        import backend.window_main as chatwin
         chatwin.request_open('chat')
 
     def _on_chat_open(self) -> None:
@@ -428,7 +422,7 @@ class ClaudeCat:
         window drift away; re-scoped per user request to track it)."""
         if not self._chat_open:
             return
-        from chat import window as chatwin
+        import backend.window_main as chatwin
         geo = chatwin.get_geometry()
         if geo is not None:
             wx, wy, ww, _wh = geo
@@ -448,7 +442,7 @@ class ClaudeCat:
 
     def _sync_usage_status(self) -> None:
         """Inject current usage into chat system prompt (spec 2.2)."""
-        from chat import window as chatwin
+        import backend.window_main as chatwin
         if not self._monitor_active():
             chatwin.set_usage_status('目前用量監控已關閉，無法提供用量數據。')
         elif self.error:
@@ -465,7 +459,7 @@ class ClaudeCat:
             chatwin.set_usage_status('用量數據尚未取得。')
 
     def _toggle_monitor(self) -> None:
-        self._save_config()
+        self._settings.save_config()
         if self.monitor_enabled.get():
             self._poll_once_async()   # turn ON: refresh right away
         else:
@@ -827,7 +821,7 @@ if __name__ == '__main__':
         logger.info('another instance is already running; exiting')
         sys.exit(0)
 
-    from chat import window as chatwin
+    import backend.window_main as chatwin
 
     def _run_cat() -> None:
         try:

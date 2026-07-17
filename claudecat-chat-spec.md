@@ -254,6 +254,18 @@ SQL 聚合與批次呼叫管線仍屬獨立腳本，兩者互補不替代。
    - 採用「先大綱後成品」流程，當對話包含簡報格式時，自動浮現「📽️ 匯出成 PPT」按鈕。
    - 支援母片套用：優先尋找執行檔同目錄的 `template.pptx`，找不到則退回尋找 `%LOCALAPPDATA%\ClaudeCat\template.pptx`。
 
+### 2.2.2 前端現代化與 MVC 重構 (v6.0 規劃)
+
+**背景**：
+隨著功能擴充（歷史紀錄、Markdown 高亮、快捷指令），原本的 `chat.html` 變得過於龐大。我們計畫導入 Chatbot-UI 風格介面，並將內部資料夾結構重構為類似 Web App 的 MVC 架構。
+
+**重構重點 (不影響現存 UI/桌面貓咪)**：
+1. **持久化 Sessions**：`_history` 不再隨關窗清除。每局對話皆存檔至 `%LOCALAPPDATA%\ClaudeCat\sessions\` 下的 JSON 檔，側邊欄動態載入。
+2. **前後端分離**：
+   - 建立 `frontend/` 拆解 `index.html`, `chat.js`, `style.css`。
+   - 建立 `backend/` 拆解 `window_main.py`, `routes/api.py`, `services/llm_service.py`。
+   - 將 system prompt 與 config 讀取集中至獨立模組管理。
+
 ## 2.3 環境前提（LLM 端點側）
 
 由使用者提供設定時一併確認：

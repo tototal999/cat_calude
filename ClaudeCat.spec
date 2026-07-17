@@ -8,7 +8,7 @@ a = Analysis(
     # chat.html is a data file (not a Python import) - pywebview loads it
     # from disk by path, so PyInstaller's static import analysis can't see
     # it and it must be listed explicitly like skins/.
-    datas=[('skins', 'skins'), ('chat/chat.html', 'chat')],
+    datas=[('skins', 'skins'), ('frontend', 'frontend')],
     hiddenimports=['pandas', 'openpyxl', 'pptx'],
     hookspath=[],
     hooksconfig={},

@@ -118,6 +118,8 @@ engine:    vLLM 0.25.0
 11. **主程式解耦與 PPTX 生成**：落實 Option B 解耦策略，將 `pandas`、`openpyxl` 及新增的 `python-pptx` 拆分至子行程 `worker.py`，改採 `onedir` 打包。並新增「先大綱後成品」的 PPT 匯出功能，支援同目錄 `template.pptx` 母片套用。
 12. **修復 PPT 轉檔崩潰**：解決 PyInstaller windowed 模式下標準 IO 為 `None` 導致 Worker 崩潰的問題，改為直接操作底層 OS 管道 (0, 1, 2) 來讀寫資料與回報錯誤。
 13. **Markdown 渲染與一鍵複製**：於 `chat.html` 新增輕量 Markdown 解析，將程式碼區塊獨立渲染為深色背景，並附上獨立的「📋 複製」按鈕；同時在整篇回覆旁也新增「全篇複製」功能。
+14. **前端介面現代化 (Chatbot-UI 風格)**：重新刻劃 `chat.html` 介面，導入完整的深色主題佈局、`/` 快捷指令 (Slash Commands)、`highlight.js` 程式碼高亮，並加入側邊欄收合功能。
+15. **歷史對話持久化 (Sessions)**：實作對話紀錄存檔機制，將對話存於 `%LOCALAPPDATA%\ClaudeCat\sessions\` 下的 JSON 檔案，讓使用者能於側邊欄讀取、刪除過往對話紀錄。
 ---
 
 ## 未完成事項

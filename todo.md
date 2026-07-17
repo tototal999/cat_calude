@@ -157,12 +157,31 @@ Part 1 / Part 1.5 / Part 2 程式碼皆已完成。剩下純粹是**實機驗收
 
 這是一項純 HTML/CSS/JS 介面優化計畫（參考 ChatGPT 現代深色風格），分為兩階段：
 
-- [ ] **第一階段（純換皮）**：
-  - [ ] 將 `chat.html` 佈局改為「雙欄式彈性佈局」（左側 Sidebar，右側 Main Chat）。
-  - [ ] 套用極深灰 (`#171717`, `#212121`) 現代化暗色系主題。
-  - [ ] 優化對話泡泡視覺，拔除邊框，最大寬度 800px 限制。
-  - [ ] 底部輸入區懸浮化、圓角化，並整合 📎 與 ⬆️ 按鈕圖示。
-- [ ] **第二階段（歷史會話）**：
-  - [ ] 實作對話持久化，在 `%LOCALAPPDATA%\ClaudeCat\sessions` 儲存/讀取對話 JSON。
-  - [ ] 在左側 Sidebar 顯示動態的「最近對話」清單。
-  - [ ] 點擊歷史紀錄可呼叫 `pywebview.api` 載入對應內容並切換。
+- [x] **第一階段（純換皮）**：
+  - [x] 將 `chat.html` 佈局改為「雙欄式彈性佈局」（左側 Sidebar，右側 Main Chat）。
+  - [x] 套用極深灰 (`#171717`, `#212121`) 現代化暗色系主題。
+  - [x] 優化對話泡泡視覺，拔除邊框，最大寬度 800px 限制。
+  - [x] 底部輸入區懸浮化、圓角化，並整合 📎 與 ⬆️ 按鈕圖示。
+- [x] **第二階段（歷史會話與進階 UI）**：
+  - [x] 實作對話持久化，在 `%LOCALAPPDATA%\ClaudeCat\sessions` 儲存/讀取對話 JSON。
+  - [x] 在左側 Sidebar 顯示動態的「最近對話」清單。
+  - [x] 點擊歷史紀錄可呼叫 `pywebview.api` 載入對應內容並切換。
+  - [x] 導入 `highlight.js` 程式碼高亮與複製。
+  - [x] 導入 `/` Slash commands 提示詞功能。
+
+---
+
+## 🏗️ 內部資料夾重構 (MVC-like Refactoring) 計畫
+
+為提升專案可維護性並分離前後端邏輯，預計進行以下重構（不影響現有 UI/UX 與桌面寵物特性）：
+
+- [x] **階段一：前端拆分**
+  - [x] 建立 `frontend/` 目錄。
+  - [x] 將 `chat.html` 拆分為 `index.html`、`chat.js`、`style.css`。
+- [ ] **階段二：後端解耦**
+  - [ ] 建立 `backend/` 目錄，將 `window.py` 拆解出 `routes/api.py` (負責 JsApi)。
+  - [ ] 建立 `backend/services/`，將 `llm.py` 移入 `llm_service.py`。
+  - [ ] 建立 `config/settings.py`，集中管理設定檔讀取。
+- [ ] **階段三：資源分離與打包修正**
+  - [ ] 將 System prompt 抽離為純文字 `backend/prompts/system.txt`。
+  - [ ] 更新 `ClaudeCat.spec`，確保 PyInstaller 能正確打包新的資料夾結構。
