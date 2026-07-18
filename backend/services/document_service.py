@@ -1,17 +1,20 @@
 """Local, evidence-first document indexing for the document assistant.
 
 The service intentionally has no network client.  It indexes only text formats
-whose source locations can be preserved deterministically; Office/PDF support
-is deferred until the offline package includes page-aware converters.
+whose source locations can be preserved deterministically. Native extractors
+preserve PDF pages, Word paragraphs, PowerPoint slides, and Excel ranges.
 """
 from __future__ import annotations
 
 import json
+import logging
 import re
 import uuid
 from pathlib import Path
 
 from config import settings
+
+logger = logging.getLogger('claudecat')
 
 DOCUMENTS_DIR = settings.LOG_DIR / 'documents'
 _SUPPORTED_SUFFIXES = {'.txt', '.md', '.csv', '.pdf', '.docx', '.pptx', '.xlsx'}
@@ -179,6 +182,7 @@ def _to_markdown(path: Path) -> str | None:
         from markitdown import MarkItDown
         return MarkItDown().convert(str(path)).text_content
     except Exception:
+        logger.debug('MarkItDown conversion unavailable for %s', path, exc_info=True)
         return None
 
 

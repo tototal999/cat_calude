@@ -25,6 +25,7 @@ from pathlib import Path
 from typing import Any
 
 import requests
+from config import settings
 
 logger = logging.getLogger('claudecat')
 
@@ -92,17 +93,8 @@ def save_config_model(model: str) -> None:
     if not _config_file:
         return
     try:
-        data = json.loads(_config_file.read_text(encoding='utf-8'))
-        if not isinstance(data, dict):
-            data = {}
-    except (OSError, ValueError):
-        data = {}
-    llm = data.setdefault('llm', {})
-    llm['model'] = model
-    _config['model'] = model
-    try:
-        _config_file.write_text(json.dumps(data, indent=1, ensure_ascii=False),
-                                encoding='utf-8')
+        settings.merge_config({'llm': {'model': model}})
+        _config['model'] = model
     except OSError:
         logger.exception('could not save llm.model to config')
 
@@ -313,7 +305,7 @@ def _extract_error(resp: requests.Response) -> str:
         if msg:
             return f'HTTP {resp.status_code}: {msg}'
     except Exception:
-        pass
+        logger.debug('could not parse error response as JSON', exc_info=True)
     return f'HTTP {resp.status_code}'
 
 
@@ -326,7 +318,7 @@ def _debug_log_request(payload: dict) -> None:
         path.write_text(json.dumps(payload, ensure_ascii=False, indent=1),
                         encoding='utf-8')
     except OSError:
-        pass
+        logger.warning('could not write debug request log: %s', path)
 
 
 def _debug_log_response(data: dict, elapsed: float) -> None:
@@ -339,4 +331,4 @@ def _debug_log_response(data: dict, elapsed: float) -> None:
         path.write_text(json.dumps(out, ensure_ascii=False, indent=1),
                         encoding='utf-8')
     except OSError:
-        pass
+        logger.warning('could not write debug response log: %s', path)

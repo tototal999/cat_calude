@@ -15,11 +15,14 @@ cat.py calls: init(scheduler, on_chat_open, on_chat_close),
 from __future__ import annotations
 
 import threading
+import logging
 from pathlib import Path
 
 import webview
 
 from backend.services import llm_service as llm
+
+logger = logging.getLogger('claudecat')
 
 _window: webview.Window | None = None
 _open_evt = threading.Event()
@@ -43,6 +46,8 @@ ICON_PATH = _APP_DIR / 'claudecat.ico'
 _history: list[dict[str, str]] = []
 _current_model: str = ''
 _current_session_id = None
+_history_generation = 0
+_history_lock = threading.RLock()
 
 
 def init(scheduler, on_chat_open=None, on_chat_close=None) -> None:
@@ -54,21 +59,52 @@ def init(scheduler, on_chat_open=None, on_chat_close=None) -> None:
 
 
 def _build_system_prompt() -> str:
-    """Dynamic system prompt with usage status injection (spec 2.2)."""
-    base = llm.system_prompt()
-    # Usage status is injected by cat.py via set_usage_status()
-    if _usage_status:
-        return base + '\n' + _usage_status
-    return base
+    """Return the chat prompt; optional limits never enter conversation context."""
+    return llm.system_prompt()
 
 
-_usage_status: str = ''
+def history_snapshot() -> tuple[int, list[dict[str, str]]]:
+    """Return a stable history copy and its generation for an LLM request."""
+    with _history_lock:
+        return _history_generation, list(_history)
 
 
-def set_usage_status(status: str) -> None:
-    """Called by cat.py to inject current usage into the system prompt."""
-    global _usage_status
-    _usage_status = status
+def append_history_if_current(generation: int, *messages: dict[str, str]) -> list[dict[str, str]] | None:
+    """Append only when the chat was not cleared or replaced while LLM ran."""
+    with _history_lock:
+        if generation != _history_generation:
+            return None
+        _history.extend(messages)
+        return list(_history)
+
+
+def replace_history(history: list[dict[str, str]], session_id: str | None, model: str | None = None) -> None:
+    """Load a session as a new history generation."""
+    global _history, _current_session_id, _current_model, _history_generation
+    with _history_lock:
+        _history = list(history)
+        _current_session_id = session_id
+        if model:
+            _current_model = model
+        _history_generation += 1
+
+
+def clear_history() -> None:
+    """Clear the current conversation and invalidate all in-flight replies."""
+    global _history, _current_session_id, _history_generation
+    with _history_lock:
+        _history = []
+        _current_session_id = None
+        _history_generation += 1
+
+
+def ensure_session_id() -> str:
+    global _current_session_id
+    with _history_lock:
+        if not _current_session_id:
+            import uuid
+            _current_session_id = str(uuid.uuid4())
+        return _current_session_id
 
 
 def get_geometry() -> tuple[int, int, int, int] | None:
@@ -81,6 +117,7 @@ def get_geometry() -> tuple[int, int, int, int] | None:
     try:
         return (_window.x, _window.y, _window.width, _window.height)
     except Exception:
+        logger.debug('chat geometry unavailable during window teardown', exc_info=True)
         return None
 
 
@@ -96,7 +133,7 @@ def request_open(tab: str = 'schedule') -> None:
             _window.show()
             _window.evaluate_js(f'showTab({tab!r})')
         except Exception:
-            pass
+            logger.warning('could not show chat window', exc_info=True)
     else:
         _open_evt.set()
 
@@ -111,21 +148,20 @@ def shutdown() -> None:
         try:
             _window.destroy()
         except Exception:
-            pass
+            logger.debug('could not destroy chat window during shutdown', exc_info=True)
 
 
 def _on_closing():
     """User clicked X: hide instead of destroy, keeping the singleton
     (and the one-shot webview.start()) alive. Real close only on quit."""
-    global _history
     if _quitting:
         return True
     try:
         _window.hide()
     except Exception:
-        pass
-    # Clear history on window close (spec: 關窗即清)
-    _history = []
+        logger.debug('could not hide chat window', exc_info=True)
+    # Clear history on window close and invalidate replies still in flight.
+    clear_history()
     if _on_chat_close:
         _on_chat_close()
     return False

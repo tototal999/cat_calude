@@ -80,7 +80,7 @@
 11. **PPTX 生成**：落實 worker.py 解耦，支援 template.pptx 母片套用。
 12. **PPT 轉檔崩潰**：修復 PyInstaller windowed 模式 stdio 為 None 的問題。
 13. **Markdown 渲染**：程式碼區塊高亮 + 一鍵複製。
-14. **Chatbot-UI 風格**：深色主題、Slash commands、highlight.js、側邊欄。
+14. **Chatbot-UI 風格**：深色主題、Slash commands、程式碼複製、側邊欄；離線版不載入 highlight.js。
 15. **歷史對話持久化**：Sessions 存於 %LOCALAPPDATA%\ClaudeCat\sessions\。
 16. **exe 啟動即死**：修正 config/settings.py load_config() 忘了 return。
 17. **MVC 重構殘留 `_settings` 未替換**：`cat.py` 殘存 `_settings.load_config()` 與

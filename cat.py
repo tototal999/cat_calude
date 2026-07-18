@@ -28,7 +28,6 @@ Success criteria (QA):
 from __future__ import annotations
 
 import ctypes
-import json
 from config import settings
 LOG_DIR = settings.LOG_DIR
 LOG_FILE = settings.LOG_FILE
@@ -189,7 +188,6 @@ class ClaudeCat:
 
         # Part 1.5 Interactive config
         self._sleep_min = int(cfg.get('sleep_min', 10))
-        self._deep_sleep_min = int(cfg.get('deep_sleep_min', 12))
         self._last_interact = time.time()
         self._drag_start_x = 0
         self._drag_start_y = 0
@@ -364,7 +362,9 @@ class ClaudeCat:
                     entry.configure(state='normal')
                     entry.delete(0, 'end')
                     self._last_interact = time.time()
-                    self._set_pet_state(PetState.SUCCESS if result.get('content') else PetState.ERROR)
+                    final_state = PetState.SUCCESS if result.get('content') else PetState.ERROR
+                    self._set_pet_state(final_state)
+                    self.root.after(1500, lambda: self._reset_pet_state_if(final_state))
                     if self._is_long_answer(text):
                         win.withdraw()
                         self._show_answer_panel(text)
@@ -389,6 +389,11 @@ class ClaudeCat:
         if previous != state:
             logger.info('pet state: %s -> %s', previous.value, state.value)
             self._last_interact = time.time()
+
+    def _reset_pet_state_if(self, state: PetState) -> None:
+        """Return to normal only if no later interaction changed state."""
+        if self.pet_state.current == state:
+            self._set_pet_state(PetState.IDLE)
 
     @staticmethod
     def _is_long_answer(text: str) -> bool:
@@ -441,11 +446,8 @@ class ClaudeCat:
         self.badge_win.geometry(f'+{x}+{y}')
 
     def _save_config(self) -> None:
-        """Merge cat-owned keys into config.json, preserving everything
-        else (e.g. llm.py's ``llm`` block) - config.json has more than one
-        writer, so this must never be a blind full-file overwrite."""
-        cfg = settings.load_config()
-        cfg.update({
+        """Merge cat-owned keys without overwriting the LLM owner's settings."""
+        patch = {
             'skin': self.current_skin.get(),
             'size': self.cat_size.get(),
             'facing_right': self.facing_right.get(),
@@ -462,10 +464,9 @@ class ClaudeCat:
             },
             'x': self.root.winfo_x(),
             'y': self.root.winfo_y(),
-        })
+        }
         try:
-            CONFIG_FILE.write_text(json.dumps(cfg, indent=1, ensure_ascii=False),
-                                   encoding='utf-8')
+            settings.merge_config(patch)
         except OSError:
             logger.exception('could not save config')
 
@@ -481,10 +482,19 @@ class ClaudeCat:
         self._save_config()
 
     def _render_cat(self) -> None:
-        self.state_frames = spritecat.load_state_frames(
-            self.cat_size.get(),
-            facing='right' if self.facing_right.get() else 'left',
-            skin=self.current_skin.get())
+        try:
+            self.state_frames = spritecat.load_state_frames(
+                self.cat_size.get(),
+                facing='right' if self.facing_right.get() else 'left',
+                skin=self.current_skin.get())
+        except (FileNotFoundError, OSError) as exc:
+            logger.exception('could not load skin: %s', self.current_skin.get())
+            messagebox.showerror(
+                'ClaudeCat 無法載入素材',
+                f'找不到或無法讀取皮膚素材：{exc}\n\n請重新安裝 skins 資料夾後再啟動。',
+                parent=self.root,
+            )
+            raise RuntimeError('required skin assets are unavailable') from exc
         self.idle_buffer = self.state_frames['idle'][0]
         self.frame_buffers = self.state_frames['run']
         self.sleep_frames = self.state_frames['sleep']
@@ -562,6 +572,8 @@ class ClaudeCat:
                            variable=self.codex_limits_enabled, command=self._toggle_codex_limits)
         sm.add_checkbutton(label='Face right', variable=self.facing_right,
                            command=self._apply_look)
+        sm.add_checkbutton(label='Show usage badge', variable=self.show_pct,
+                           command=self._toggle_badge)
         sm.add_separator()
         size_menu = tk.Menu(sm, tearoff=0)
         for s in SIZE_CHOICES:
@@ -574,6 +586,13 @@ class ClaudeCat:
                                       value=s, command=self._save_config)
         sm.add_cascade(label='Refresh', menu=poll_menu)
         return sm
+
+    def _toggle_badge(self) -> None:
+        if self.show_pct.get():
+            self._show_cat()
+        else:
+            self.badge_win.withdraw()
+        self._save_config()
 
     # ---- Schedule + monitor toggle (Part 1) --------------------------------
 
@@ -651,7 +670,6 @@ class ClaudeCat:
         self._pre_chat_size = self.cat_size.get()
         self.cat_size.set(32)
         self._apply_look()
-        self._sync_usage_status()
         self._dock_tick()
         logger.info('chat opened, cat shrunk to 32px and docking')
 
@@ -696,11 +714,6 @@ class ClaudeCat:
         # (P1.5-4) creep up just because no one is clicking the cat itself.
         self._last_interact = time.time()
         self.root.after(400, self._dock_tick)
-
-    def _sync_usage_status(self) -> None:
-        """Limits monitoring never changes the chat/document prompt."""
-        import backend.window_main as chatwin
-        chatwin.set_usage_status('')
 
     def _toggle_monitor(self) -> None:
         if self.monitor_enabled.get() and not self.claude_limits_available:
@@ -1115,7 +1128,6 @@ class ClaudeCat:
 
         if was_error:
             logger.info('poll recovered: usage=%.0f%%', self.usage_pct)
-        self._sync_usage_status()
         return self.poll_interval.get()
 
     def _poll_codex_once(self) -> None:
@@ -1165,9 +1177,15 @@ if __name__ == '__main__':
             worker.main(sys.argv[2], max_chars)
             sys.exit(0)
         elif sys.argv[1] == '--document-check':
+            if len(sys.argv) < 5:
+                sys.exit(2)
             from backend.services import document_service
             result = document_service.ingest(sys.argv[2])
             if result.get('error'):
+                sys.exit(1)
+            evidence = document_service.query(result['document']['id'], sys.argv[3])
+            sources = evidence.get('sources', [])
+            if not sources or sources[0]['source'].get('locator') != sys.argv[4]:
                 sys.exit(1)
             sys.exit(0)
         elif sys.argv[1] == '--ppt':

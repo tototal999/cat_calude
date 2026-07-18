@@ -9,10 +9,29 @@ from __future__ import annotations
 import json
 import subprocess
 import sys
+import time
+from urllib.error import URLError
+from urllib.request import urlopen
 from pathlib import Path
 
 _process: subprocess.Popen | None = None
 _status = '本機模型未啟用。'
+
+
+def _wait_until_ready(process: subprocess.Popen, endpoint: str, timeout_seconds: float = 10.0) -> str | None:
+    """Return an error message unless llama.cpp answers on its loopback health URL."""
+    deadline = time.monotonic() + timeout_seconds
+    while time.monotonic() < deadline:
+        return_code = process.poll()
+        if return_code is not None:
+            return f'本機模型服務啟動後結束（exit {return_code}）。'
+        try:
+            with urlopen(f'{endpoint}/health', timeout=0.5) as response:
+                if 200 <= response.status < 300:
+                    return None
+        except (OSError, URLError):
+            time.sleep(0.2)
+    return '本機模型服務未在 10 秒內就緒。'
 
 
 def init(config_file: Path) -> dict:
@@ -44,11 +63,26 @@ def init(config_file: Path) -> dict:
     global _process
     if _process is None or _process.poll() is not None:
         flags = subprocess.CREATE_NO_WINDOW if sys.platform == 'win32' else 0
-        _process = subprocess.Popen(
-            [str(binary), '-m', str(model), '--host', '127.0.0.1', '--port', str(port)],
-            cwd=str(app_dir), creationflags=flags, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-        )
+        try:
+            _process = subprocess.Popen(
+                [str(binary), '-m', str(model), '--host', '127.0.0.1', '--port', str(port)],
+                cwd=str(app_dir), creationflags=flags, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            )
+        except OSError as exc:
+            _status = f'無法啟動本機模型服務：{exc}'
+            return {'status': _status, 'endpoint': None}
     endpoint = f'http://127.0.0.1:{port}/v1'
+    error = _wait_until_ready(_process, endpoint)
+    if error:
+        if _process.poll() is None:
+            _process.terminate()
+            try:
+                _process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                _process.kill()
+        _process = None
+        _status = error
+        return {'status': _status, 'endpoint': None}
     _status = f'本機模型服務已啟動（{endpoint}）。'
     return {'status': _status, 'endpoint': endpoint, 'model': options.get('model_id', '')}
 

@@ -12,6 +12,8 @@ from backend.routes.api import JsApi, _session_path
 from backend.services import document_service as documents
 from backend.services import local_llm
 from backend.services import llm_service as llm
+from config import settings
+import backend.window_main as wm
 from pet.state_machine import PetState, PetStateMachine
 from plugins import builtin as builtin_plugins
 import scheduler
@@ -43,6 +45,27 @@ class SchedulerTests(unittest.TestCase):
             self.assertEqual(result.tick(now + timedelta(minutes=1)), [])
             self.assertEqual([(item['id'], kind) for item, kind in result.tick(now + timedelta(minutes=2))],
                              [('daily-test', 'ontime')])
+
+    def test_weekly_hourly_and_cross_midnight_lead(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'schedule.json'
+            path.write_text(json.dumps([
+                {'id': 'weekly', 'title': 'Weekly', 'type': 'weekly', 'day': 'MO',
+                 'time': '09:00', 'lead_min': 0, 'enabled': True},
+                {'id': 'hourly', 'title': 'Hourly', 'type': 'hourly', 'minute': 30,
+                 'lead_min': 0, 'enabled': True},
+                {'id': 'midnight', 'title': 'Midnight', 'type': 'daily', 'time': '00:01',
+                 'lead_min': 2, 'enabled': True},
+            ]), encoding='utf-8')
+            result = scheduler.Scheduler(path)
+            self.assertEqual([(item['id'], kind) for item, kind in result.tick(datetime(2026, 7, 20, 9, 0))],
+                             [('weekly', 'ontime')])
+            self.assertEqual([(item['id'], kind) for item, kind in result.tick(datetime(2026, 7, 20, 13, 30))],
+                             [('hourly', 'ontime')])
+            self.assertEqual([(item['id'], kind) for item, kind in result.tick(datetime(2026, 7, 20, 23, 59))],
+                             [('midnight', 'lead')])
+            self.assertEqual([(item['id'], kind) for item, kind in result.tick(datetime(2026, 7, 21, 0, 1))],
+                             [('midnight', 'ontime')])
 
 
 class PetStateTests(unittest.TestCase):
@@ -113,6 +136,15 @@ class ApiTests(unittest.TestCase):
         finally:
             api.set_usage_api_enabled(False)
 
+    def test_clearing_history_discards_an_inflight_response(self):
+        wm.clear_history()
+        with patch.object(llm, 'chat', side_effect=lambda *_args, **_kwargs: (
+                wm.clear_history() or {'content': 'late answer'})):
+            result = JsApi().send_message('hello')
+        self.assertTrue(result['discarded'])
+        _generation, history = wm.history_snapshot()
+        self.assertEqual(history, [])
+
 
 class LlmTests(unittest.TestCase):
     def test_model_list_deduplicates_primary_and_fallbacks(self):
@@ -141,6 +173,19 @@ class LlmTests(unittest.TestCase):
             self.assertTrue(llm.is_local_endpoint())
 
 
+class SettingsTests(unittest.TestCase):
+    def test_merge_config_preserves_independent_sections(self):
+        with tempfile.TemporaryDirectory() as directory:
+            config_path = Path(directory) / 'config.json'
+            with patch.object(settings, 'CONFIG_FILE', config_path), \
+                 patch.object(settings, 'config', {}):
+                settings.merge_config({'llm': {'model': 'model-a'}})
+                settings.merge_config({'skin': 'bluecat', 'llm': {'debug_log': True}})
+                data = json.loads(config_path.read_text(encoding='utf-8'))
+            self.assertEqual(data['skin'], 'bluecat')
+            self.assertEqual(data['llm'], {'model': 'model-a', 'debug_log': True})
+
+
 
 class LocalLlmRuntimeTests(unittest.TestCase):
     def test_disabled_runtime_does_not_start_a_process(self):
@@ -148,6 +193,18 @@ class LocalLlmRuntimeTests(unittest.TestCase):
             config = Path(directory) / 'config.json'
             config.write_text(json.dumps({'local_llm': {'enabled': False}}), encoding='utf-8')
             self.assertEqual(local_llm.init(config)['status'], '本機模型未啟用。')
+
+    def test_runtime_reports_server_start_failure(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            config = root / 'config.json'
+            (root / 'llama-server.exe').touch()
+            (root / 'model.gguf').touch()
+            config.write_text(json.dumps({'local_llm': {'enabled': True}}), encoding='utf-8')
+            with patch.object(local_llm.subprocess, 'Popen', side_effect=OSError('blocked')):
+                result = local_llm.init(config)
+            self.assertIn('無法啟動本機模型服務', result['status'])
+            self.assertIsNone(result['endpoint'])
 
 
 class DocumentServiceTests(unittest.TestCase):
@@ -176,7 +233,7 @@ class DocumentServiceTests(unittest.TestCase):
                 self.assertEqual(answer['answer'], '此文件沒有描述此問題，無法依文件確認。')
                 self.assertEqual(answer['sources'], [])
 
-    def test_pdf_is_rejected_until_page_aware_converter_is_packaged(self):
+    def test_scanned_pdf_is_rejected_with_an_ocr_message(self):
         from pypdf import PdfWriter
         with tempfile.TemporaryDirectory() as directory:
             source = Path(directory) / 'scan.pdf'

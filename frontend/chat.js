@@ -487,9 +487,6 @@ function renderMarkdownLite(text, container) {
       preWrapper.appendChild(pre);
       container.appendChild(preWrapper);
       
-      // Apply syntax highlighting
-      try { hljs.highlightElement(codeEl); } catch (e) {}
-      
       i++; // skip the code part
     }
   }

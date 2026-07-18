@@ -21,7 +21,7 @@ a = Analysis(
     datas=[('skins', 'skins'), ('frontend', 'frontend'), ('claudecat.ico', '.'),
            (str(_python_root / 'tcl'), 'tcl'),
            (str(_python_root / 'Lib' / 'tkinter'), 'tkinter')],
-    hiddenimports=['tkinter', 'tkinter.ttk', 'openpyxl', 'pptx', 'xlrd',
+    hiddenimports=['tkinter', 'openpyxl', 'pptx', 'xlrd',
                    'pystray', 'pystray._win32'],
     hookspath=[],
     hooksconfig={},

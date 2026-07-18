@@ -78,7 +78,7 @@
 - 文件工作區已可建立本機索引並檢索 TXT、Markdown、CSV、PDF、DOCX、PPTX 與 XLSX；引用依格式保留行號、PDF 頁碼、Word 段落／標題、投影片或 Excel 工作表與儲存格範圍。
 - 文件問答會先檢索相關區塊，再將**僅該批證據與來源定位**傳給設定於 `llm.base_url` 的公司內網 Qwen OpenAI-compatible endpoint；未命中證據時不呼叫 LLM，直接回覆無法依文件確認。
 - 已以最小 chat-completions request 實測公司內網 Qwen endpoint 正常回應；實際內網 URL 只存在於使用者執行期 `config.json`，不寫入公開 repo 文件。
-- llama.cpp sidecar 已有 loopback 生命週期管理骨架，作為未來無內網時的備援；目前預設推論來源是公司內網 Qwen。
+- llama.cpp sidecar 限定 loopback，會驗證 binary／GGUF、等待 `/health` 就緒並在失敗時明確回報；離線安裝包驗收仍未完成，因此不能作為已交付的備援。預設推論來源仍是執行期設定的 LLM endpoint。
 - 文件工作區已提供問問題、摘要、流程／SOP、整理表格、比較文件與建議問題；每種操作都先附帶來源 metadata，再呼叫公司內網 Qwen，並在 UI 固定顯示來源卡片。
 
 ## 可驗收條件

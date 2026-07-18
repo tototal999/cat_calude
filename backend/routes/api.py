@@ -2,6 +2,7 @@ from backend.services import llm_service as llm
 from backend.services import document_service as documents
 from config import settings
 import json
+import logging
 import uuid
 import time
 import sys
@@ -10,6 +11,8 @@ from pathlib import Path
 import webview
 
 import backend.window_main as wm
+
+logger = logging.getLogger('claudecat')
 
 
 def _session_path(session_id):
@@ -182,8 +185,8 @@ class JsApi:
                         'title': data.get('title', 'New Chat'),
                         'updated_at': data.get('updated_at', 0)
                     })
-            except Exception:
-                pass
+            except (OSError, ValueError) as exc:
+                logger.warning('skipped unreadable session %s: %s', p.name, exc)
         sessions.sort(key=lambda x: x['updated_at'], reverse=True)
         return sessions
 
@@ -194,11 +197,11 @@ class JsApi:
         try:
             with open(path, 'r', encoding='utf-8') as f:
                 data = json.load(f)
-            wm._history = data.get('history', [])
-            wm._current_session_id = session_id
-            if data.get('model'):
-                wm._current_model = data['model']
-            return {'status': 'ok', 'history': wm._history, 'model': wm._current_model}
+            history = data.get('history', [])
+            if not isinstance(history, list):
+                return {'error': '對話內容格式無效'}
+            wm.replace_history(history, session_id, data.get('model'))
+            return {'status': 'ok', 'history': history, 'model': wm._current_model}
         except Exception as e:
             return {'error': str(e)}
 
@@ -209,16 +212,15 @@ class JsApi:
         if path.exists():
             try:
                 path.unlink()
-            except Exception:
-                pass
+            except OSError as exc:
+                return {'error': f'無法刪除對話：{exc}'}
         
         if wm._current_session_id == session_id:
             self.clear_history()
         return {'status': 'ok'}
 
     def clear_history(self):
-        wm._history = []
-        wm._current_session_id = None
+        wm.clear_history()
         return {'status': 'ok'}
 
     def export_ppt(self, text):
@@ -279,15 +281,16 @@ class JsApi:
                 if len(file_content) > max_chars:
                     return {'error': f'檔案內容過長 ({len(file_content)} 字 / 上限 {max_chars} 字)，請先縮減資料或調整 config.json 再上傳。'}
                 
-                prompt_text = f"{text}\\n\\n[附加檔案：{p.name}]\\n{file_content}"
+                prompt_text = f"{text}\n\n[附加檔案：{p.name}]\n{file_content}"
             except Exception as e:
                 return {'error': f'啟動 Worker 失敗: {e}'}
 
         sys_prompt = wm._build_system_prompt()
         max_turns = llm.max_history_turns()
 
-        window = wm._history[-(max_turns * 2):] if len(wm._history) > max_turns * 2 else list(wm._history)
-        truncated = len(wm._history) > max_turns * 2
+        history_generation, history = wm.history_snapshot()
+        window = history[-(max_turns * 2):] if len(history) > max_turns * 2 else history
+        truncated = len(history) > max_turns * 2
 
         messages = [{'role': 'system', 'content': sys_prompt}]
         messages.extend(window)
@@ -313,32 +316,41 @@ class JsApi:
         if result.get('error'):
             return result
 
-        wm._history.append({'role': 'user', 'content': text})
-        wm._history.append({'role': 'assistant', 'content': result['content']})
+        history = wm.append_history_if_current(
+            history_generation,
+            {'role': 'user', 'content': text},
+            {'role': 'assistant', 'content': result['content']},
+        )
+        if history is None:
+            return {
+                'content': result['content'],
+                'model': result.get('model', wm._current_model),
+                'degraded': degraded,
+                'discarded': True,
+            }
 
         try:
             sessions_dir = settings.LOG_DIR / 'sessions'
             sessions_dir.mkdir(exist_ok=True)
-            if not wm._current_session_id:
-                wm._current_session_id = str(uuid.uuid4())
+            session_id = wm.ensure_session_id()
             
             title = "New Chat"
-            for msg in wm._history:
+            for msg in history:
                 if msg['role'] == 'user':
-                    title = msg['content'][:20].replace('\\n', ' ')
+                    title = msg['content'][:20].replace('\n', ' ')
                     break
                     
             session_data = {
-                'id': wm._current_session_id,
+                'id': session_id,
                 'title': title,
                 'updated_at': time.time(),
-                'history': wm._history,
+                'history': history,
                 'model': wm._current_model
             }
-            with open(sessions_dir / f"{wm._current_session_id}.json", "w", encoding="utf-8") as f:
+            with open(sessions_dir / f"{session_id}.json", "w", encoding="utf-8") as f:
                 json.dump(session_data, f, ensure_ascii=False)
-        except Exception:
-            pass
+        except OSError:
+            logger.exception('could not save chat session')
 
         return {
             'content': result['content'],
@@ -355,9 +367,10 @@ class JsApi:
 
     def export_chat(self):
         try:
-            if not wm._history:
+            _generation, history = wm.history_snapshot()
+            if not history:
                 return {'error': '沒有對話可匯出'}
-            path = llm.export_chat(wm._history, wm._current_model)
+            path = llm.export_chat(history, wm._current_model)
             return {'error': None, 'path': str(path)}
         except Exception as exc:
             return {'error': str(exc)}

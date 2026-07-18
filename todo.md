@@ -25,13 +25,13 @@
 - [x] P6-OpenPets-2. `PetState` 與快速提問短答／長答貼身卡片；短答留在泡泡，超過 180 字或 4 行時展開可複製、繼續問、收合的貼身卡片。（2026-07-18）
 - [x] P6-OpenPets-3. 系統匣與安全 plugin 介面：顯示／隱藏、快速提問、文件助手與結束；plugins 僅能觸發固定白名單事件，不做動態下載。（2026-07-18）
 
-- [x] P6-0. 單擊桌面貓開啟貼身的快速提問泡泡；不開完整聊天視窗，Enter 後以公司內網 Qwen 回答。（2026-07-18）
+- [x] P6-0. 單擊桌面貓開啟貼身的快速提問泡泡；不開完整聊天視窗，Enter 後以執行期設定的 OpenAI-compatible LLM 回答。（2026-07-18）
 
 - [x] P6-1. 建立「聊聊天」與「拖文件給我」兩個入口，拖檔後開啟文件工作區。（2026-07-18：pywebview 文件頁與桌寵右鍵入口）
 - [o] P6-2. 已在文件索引中整合本機 MarkItDown 轉 Markdown；仍待將 Python runtime／sidecar 隨公司離線安裝包封裝，並由主程式以 `127.0.0.1` 生命週期管理。（2026-07-18）
 - [x] P6-3. 支援 PDF、DOCX、PPTX、XLSX、CSV、Markdown、TXT 轉換，並保留來源 metadata。（2026-07-18：離線原生解析）
 - [x] P6-4. 實作來源定位：PDF 頁碼、Word 標題／段落、PPT 投影片、Excel 工作表與儲存格範圍；不得從 Markdown 猜測 PDF 頁碼。（2026-07-18）
-- [x] P6-5. 本機切塊與檢索：只將相關區塊交給公司內網 Qwen（`llm.base_url`）或未來 GGUF／llama.cpp 相容模型。（2026-07-18：文件問答已接至既有 LLM client，內網 Qwen 最小 chat-completions request 實測通過）
+- [x] P6-5. 本機切塊與檢索：只將相關區塊交給執行期設定的 `llm.base_url` 或未來 GGUF／llama.cpp 相容模型。（2026-07-18：文件問答只傳遞檢索命中的來源內容與定位資訊）
 - [x] P6-6. 預設開啟「只回答文件內容」；無證據時回覆「此文件沒有描述此問題，無法依文件確認。」（2026-07-18：本機 evidence-first 檢索）
 - [x] P6-7. 由 metadata 產生回答引用與相關內容範圍，不接受僅由 LLM 生成的引用。（2026-07-18：檔名、標題與行號）
 - [x] P6-8. 實作摘要、問問題、流程／SOP、整理表格、比較文件與建議問題介面。（2026-07-18）
@@ -46,12 +46,12 @@ Claude／Codex limits 與聊天／文件助手完全獨立，預設 OFF。兩者
 ### v6.1 驗收
 
 - [ ] P6-A1. 離線安裝後，不需網路、Ollama 或命令列，即可使用一般聊天及文件助手。
-- [x] P6-A2. PDF、DOCX、PPTX、XLSX 各以至少一份測試檔驗證：每項答案事實都有正確來源定位。（2026-07-18：單元測試）
+- [x] P6-A2. PDF、DOCX、PPTX、XLSX 各以至少一份測試檔驗證：每項答案事實都有正確來源定位。（2026-07-18：`verify_packaged_documents.py` 以新版 EXE 驗證索引與來源定位）
 - [x] P6-A3. 文件未提及的問題不臆測；掃描 PDF 顯示 OCR 限制。（2026-07-18：單元測試）
 
-**2026-07-18 實測紀錄：**公司內網 Qwen endpoint 以既定模型與最小 `chat/completions` request 回應成功；文件問答 bridge 測試確認只傳遞檢索命中的來源內容與定位資訊。
+**2026-07-18 實測紀錄：**LLM endpoint 可由使用者執行期設定；公開 repo 不記錄內網 URL、模型或憑證。文件問答 bridge 測試確認只傳遞檢索命中的來源內容與定位資訊。
 
-**2026-07-18 瘦身與驗證：**Excel worker 改用 `openpyxl`／`xlrd`，移除 pandas/numpy；打包時排除未使用的 pyarrow、onnxruntime、grpc、oracledb 與 pypdfium2。完整狀態素材後的 `dist\\ClaudeCat` 為 **77 MiB**，已用打包 EXE 的 `--document-check` 分別驗證 PDF、DOCX、PPTX、XLSX 文件索引皆成功（exit 0）。
+**2026-07-18 瘦身與驗證：**Excel worker 改用 `openpyxl`／`xlrd`，移除 pandas/numpy；打包時排除未使用的 pyarrow、onnxruntime、grpc、oracledb 與 pypdfium2。新版 `dist\\ClaudeCat` 為 **77.0 MiB**；`verify_packaged_documents.py` 已以打包 EXE 驗證 PDF、DOCX、PPTX、XLSX 的索引與來源定位。
 
 ---
 
@@ -86,7 +86,7 @@ Claude／Codex limits 與聊天／文件助手完全獨立，預設 OFF。兩者
 - [o] daily：2 分鐘後＋lead_min=1 → 提前卡與正點卡各彈一次
       *(2026-07-17 實機驗證：08:51 lead、08:52 ontime 各觸發一次，log 確認)*
 - [x] lead_min=0 只彈正點；weekly 非當日不觸發；hourly 每小時該分鐘觸發
-      *(test_logic.py 21/21 通過，含跨午夜 lead)*
+      *(`test_logic.py` 的 `SchedulerTests` 已覆蓋 daily、weekly、hourly、跨午夜 lead 與壞 JSON；全套 28 項測試通過，2026-07-18)*
 - [x] enabled=false／刪除後不觸發 *(test_logic.py 驗證)*
 - [x] schedule.json 改壞格式 → 明確指出錯誤筆，其餘正常 *(test_logic.py 驗證)*
 - [o] 彈卡 60s 自動收合；點擊即關；表單即改即存、重啟生效
@@ -135,8 +135,7 @@ Claude／Codex limits 與聊天／文件助手完全獨立，預設 OFF。兩者
 
 ### 前置
 
-- [x] P2-0. **使用者提供**：base_url=`http://example.invalid:8000/LLM/v1`，
-      model=`Qwen/Qwen3.6-35B-A3B-FP8-nothink`，api_key 不需要，引擎 vLLM 0.25.0
+- [x] P2-0. LLM endpoint、模型與憑證由每台電腦的執行期 `config.json` 提供；公開 repo 僅保留泛用設定範例。
 - [x] P2-1. 端點側環境確認：chat completions 正常回應
 - [x] P2-2. `/v1/models` 回 404（該端點未實作此路徑）→ 改用 config 靜態
       `fallback_models` 清單餵模型下拉選單
@@ -151,7 +150,7 @@ Claude／Codex limits 與聊天／文件助手完全獨立，預設 OFF。兩者
 - [x] P2-6. `chat/window.py`：暖機探測＋聊天 js_api（send_message/list_models/
       set_model/save_note/export_chat/probe，thread 不卡 UI）
 - [x] P2-7. `cat.py`：「交談...」→開窗＋貓縮 32px 停靠；關窗復原原尺寸
-- [x] P2-8. 上下文：動態 system prompt（含監控狀態分支）、滑動視窗截斷、
+- [x] P2-8. 上下文：基礎 system prompt、滑動視窗截斷、
       context 溢出降級（砍半重試一次＋灰字明說）
 - [x] P2-9. 文件：匯出 chat_*.md；💾 存 note_*.md（含時間戳、模型）
 
@@ -160,7 +159,7 @@ Claude／Codex limits 與聊天／文件助手完全獨立，預設 OFF。兩者
 - [ ] 聊天期間貓不掉幀；端點離線錯誤明確顯示；開窗即知離線
 - [ ] 中文選字 Enter 不誤送；生成中重按無效；視窗單例
 - [ ] 模型 fallback 提示正確；切模型 history 保留
-- [ ] 監控 OFF 時 prompt 注入狀態說明（貓不拿舊數字胡說）
+- [x] Claude／Codex limits 不注入聊天 prompt；聊天與文件助手與 limits 開關完全獨立。
 - [ ] 匯出/存檔內容正確；關窗貓復原
 - [ ] debug_log 預設關閉時 debug/ 目錄零檔案；設 true 有記錄
 - [ ] 貼超長文字 → 灰字降級提示與重試；極端長度最終報錯不無限重試
@@ -190,7 +189,7 @@ agent hooks 整合（裝現成 clawd-on-desk 即可）／window sitting／多寵
 ## 📌 待使用者提供／決定
 
 - [x] ~~verify_pywebview_tk.py 三項結果~~ → 2026-07-17 GO
-- [x] ~~LLM 設定~~ → 已提供並驗證（example.invalid:8000）
+- [x] ~~LLM 設定~~ → 由使用者在執行期 `config.json` 提供；不記錄於公開 repo。
 - [ ] 切角色是否連動聊天人設（Part 2 驗收後定案即可）
 - [ ] 📎 檔案附加要不要直升 P2-11（Part 2 驗收後定案即可）
 
@@ -216,7 +215,7 @@ Part 1 / Part 1.5 / Part 2 程式碼皆已完成。剩下純粹是**實機驗收
   - [x] 實作對話持久化，在 `%LOCALAPPDATA%\ClaudeCat\sessions` 儲存/讀取對話 JSON。
   - [x] 在左側 Sidebar 顯示動態的「最近對話」清單。
   - [x] 點擊歷史紀錄可呼叫 `pywebview.api` 載入對應內容並切換。
-  - [x] 導入 `highlight.js` 程式碼高亮與複製。
+  - [x] 程式碼區塊提供複製按鈕；離線版不載入語法高亮套件。
   - [x] 導入 `/` Slash commands 提示詞功能。
 
 ---
