@@ -19,6 +19,12 @@
 
 ### 文件助手 MVP
 
+- [x] P6-OpenPets-0. 保留 Python/Tkinter；不導入 Electron 或 OpenPets 程式碼，只採用狀態機、貼身氣泡／卡片與安全模組化概念。（2026-07-18）
+- [x] P6-OpenPets-1. 素材缺口盤點已寫入 `local-document-assistant-mvp.md`；缺圖時必須安全 fallback，不得阻止既有皮膚載入。（2026-07-18）
+- [x] P6-OpenPets-1a. bluecat、cowcat、ragdollcat 均已補齊 idle／sleep／error／listening／thinking／success；命名狀態圖不再混入 run cycle。（2026-07-18）
+- [x] P6-OpenPets-2. `PetState` 與快速提問短答／長答貼身卡片；短答留在泡泡，超過 180 字或 4 行時展開可複製、繼續問、收合的貼身卡片。（2026-07-18）
+- [x] P6-OpenPets-3. 系統匣與安全 plugin 介面：顯示／隱藏、快速提問、文件助手與結束；plugins 僅能觸發固定白名單事件，不做動態下載。（2026-07-18）
+
 - [x] P6-0. 單擊桌面貓開啟貼身的快速提問泡泡；不開完整聊天視窗，Enter 後以公司內網 Qwen 回答。（2026-07-18）
 
 - [x] P6-1. 建立「聊聊天」與「拖文件給我」兩個入口，拖檔後開啟文件工作區。（2026-07-18：pywebview 文件頁與桌寵右鍵入口）
@@ -45,7 +51,7 @@ Claude／Codex limits 與聊天／文件助手完全獨立，預設 OFF。兩者
 
 **2026-07-18 實測紀錄：**公司內網 Qwen endpoint 以既定模型與最小 `chat/completions` request 回應成功；文件問答 bridge 測試確認只傳遞檢索命中的來源內容與定位資訊。
 
-**2026-07-18 瘦身與驗證：**Excel worker 改用 `openpyxl`／`xlrd`，移除 pandas/numpy；打包時排除未使用的 pyarrow、onnxruntime、grpc、oracledb 與 pypdfium2。`dist\\ClaudeCat` 為 **73.5 MiB**，已用打包 EXE 的 `--document-check` 分別驗證 PDF、DOCX、PPTX、XLSX 文件索引皆成功（exit 0）。
+**2026-07-18 瘦身與驗證：**Excel worker 改用 `openpyxl`／`xlrd`，移除 pandas/numpy；打包時排除未使用的 pyarrow、onnxruntime、grpc、oracledb 與 pypdfium2。完整狀態素材後的 `dist\\ClaudeCat` 為 **77 MiB**，已用打包 EXE 的 `--document-check` 分別驗證 PDF、DOCX、PPTX、XLSX 文件索引皆成功（exit 0）。
 
 ---
 

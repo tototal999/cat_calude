@@ -16,7 +16,8 @@ python cat.py
 ```
 - 左鍵拖曳移動（貓或 % 徽章皆可）
 - 單擊貓：開啟貼在貓旁的「問我一句」泡泡，Enter 後直接取得公司內網 Qwen 回答，不開完整聊天視窗。
-- 右鍵選單：包含「交談...」、「排程...」等功能，可開啟現代化 WebView 聊天介面。
+- 右鍵選單：包含「交談...」、「排程...」、內建 Plugins 等功能，可開啟現代化 WebView 聊天介面。
+- Windows 系統匣：可顯示／隱藏桌寵、快速提問、開啟文件助手或結束程式。
 - 貓以本機互動、排程與閒置狀態呈現動畫；Claude／Codex limits 都是可選功能，首次啟用須由每位使用者在自己的電腦同意。未安裝或未登入兩者時，徽章顯示 `No use`，不會查詢。Codex 透過本機 app-server 讀取用量，屬非官方相容方式，可能隨 Codex 更新失效。
 
 ## 🌟 最新功能 (v6.0)
@@ -66,10 +67,10 @@ claude-cat/
 ## 打包成 EXE
 本專案採用 `onedir` 模式；Excel 解析改用 `openpyxl`／`xlrd`，不帶入 `pandas`／`numpy` 等未使用的大型依賴：
 ```bash
-pip install pyinstaller
+pip install pyinstaller pystray
 pyinstaller ClaudeCat.spec --clean -y
 ```
-產出在 `dist\ClaudeCat`。`skins\` 與 `frontend\` 會一併凍入資料夾中。之後新增皮膚不需重新打包，丟到 exe 旁邊的 `skins\` 資料夾即可。2026-07-18 參考建置約 **73.5 MiB**；已以打包 EXE 驗證 PDF、DOCX、PPTX、XLSX 可完成文件索引。
+產出在 `dist\ClaudeCat`。`skins\` 與 `frontend\` 會一併凍入資料夾中。之後新增皮膚不需重新打包，丟到 exe 旁邊的 `skins\` 資料夾即可。2026-07-18 最新參考建置約 **77 MiB**（含三套完整狀態素材）；已以打包 EXE 驗證 PDF、DOCX、PPTX、XLSX 可完成文件索引。
 
 桌寵會顯示為 Windows 工作列的 `ClaudeCat` 項目；可直接按該項目的關閉按鈕結束程式，位置會照既有流程保存。
 

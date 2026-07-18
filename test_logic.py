@@ -12,7 +12,10 @@ from backend.routes.api import JsApi, _session_path
 from backend.services import document_service as documents
 from backend.services import local_llm
 from backend.services import llm_service as llm
+from pet.state_machine import PetState, PetStateMachine
+from plugins import builtin as builtin_plugins
 import scheduler
+import spritecat
 import worker
 
 
@@ -40,6 +43,42 @@ class SchedulerTests(unittest.TestCase):
             self.assertEqual(result.tick(now + timedelta(minutes=1)), [])
             self.assertEqual([(item['id'], kind) for item, kind in result.tick(now + timedelta(minutes=2))],
                              [('daily-test', 'ontime')])
+
+
+class PetStateTests(unittest.TestCase):
+    def test_chat_lifecycle_transitions_are_deterministic(self):
+        state = PetStateMachine()
+        for target in (PetState.LISTENING, PetState.THINKING, PetState.STREAMING, PetState.SUCCESS):
+            self.assertTrue(state.transition(target))
+        self.assertEqual(state.current, PetState.SUCCESS)
+        self.assertTrue(state.transition(PetState.IDLE))
+
+    def test_invalid_transition_keeps_existing_state(self):
+        state = PetStateMachine()
+        self.assertFalse(state.transition(PetState.STREAMING))
+        self.assertEqual(state.current, PetState.IDLE)
+
+
+class PluginTests(unittest.TestCase):
+    def test_builtin_plugins_are_fixed_allowlisted_actions(self):
+        actions = builtin_plugins.actions()
+        self.assertEqual([action.action_id for action in actions], ['quick_question', 'documents'])
+        self.assertTrue(all(action.label for action in actions))
+
+
+class SpriteStateTests(unittest.TestCase):
+    def test_named_state_assets_do_not_leak_into_run_cycle(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for name in ('bluecat_run_01.png', 'bluecat_idle_01.png',
+                         'bluecat_listening_01.png', 'bluecat_thinking_01.png',
+                         'bluecat_success_01.png', 'bluecat_error_01.png'):
+                (root / name).touch()
+            actions = spritecat._action_paths(root)
+            self.assertEqual([path.name for path in actions['run']], ['bluecat_run_01.png'])
+            self.assertEqual(len(actions['listening']), 1)
+            self.assertEqual(len(actions['thinking']), 1)
+            self.assertEqual(len(actions['success']), 1)
 
 
 class ApiTests(unittest.TestCase):

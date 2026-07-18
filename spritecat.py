@@ -103,15 +103,37 @@ def _collect_pngs(skin_dir: Path) -> tuple[list[Path], list[Path], Path | None, 
         raise FileNotFoundError(f'No PNG files found in {skin_dir}')
     sleep_paths = _pick_all(all_pngs, 'sleep')
     error_paths = _pick_all(all_pngs, 'error')
-    non_special = [p for p in all_pngs if p not in sleep_paths and p not in error_paths]
+    listening_paths = _pick_all(all_pngs, 'listening')
+    thinking_paths = _pick_all(all_pngs, 'thinking')
+    success_paths = _pick_all(all_pngs, 'success')
+    non_special = [p for p in all_pngs if p not in sleep_paths and p not in error_paths
+                   and p not in listening_paths and p not in thinking_paths
+                   and p not in success_paths]
     idle_path = _pick_one(non_special, 'idle')
-    special = set(sleep_paths) | set(error_paths) | ({idle_path} if idle_path else set())
+    special = (set(sleep_paths) | set(error_paths) | set(listening_paths)
+               | set(thinking_paths) | set(success_paths)
+               | ({idle_path} if idle_path else set()))
     frame_paths = [p for p in all_pngs if p not in special]
     if not frame_paths:
         # The special-pose file(s) were the only PNGs - use them as normal
         # frames too rather than leaving the skin with no run cycle.
         return all_pngs, [], None, []
     return frame_paths, sleep_paths, idle_path, error_paths
+
+
+def _action_paths(skin_dir: Path) -> dict[str, list[Path]]:
+    """Return every supported action, keeping named states out of run frames."""
+    run_paths, sleep_paths, idle_path, error_paths = _collect_pngs(skin_dir)
+    all_pngs = sorted(skin_dir.glob('*.png'))
+    return {
+        'run': run_paths,
+        'idle': [idle_path] if idle_path else [run_paths[0]],
+        'sleep': sleep_paths,
+        'error': error_paths,
+        'listening': _pick_all(all_pngs, 'listening'),
+        'thinking': _pick_all(all_pngs, 'thinking'),
+        'success': _pick_all(all_pngs, 'success'),
+    }
 
 
 def _remove_white_bg(img: Image.Image, threshold: int = WHITE_THRESHOLD) -> Image.Image:
@@ -191,3 +213,16 @@ def load_sprite_frames(size: int, facing: str = 'left', skin: str = DEFAULT_SKIN
     idle_bgra = _load_one(idle_path, size, facing) if idle_path else frames_bgra[0]
 
     return idle_bgra, frames_bgra, sleep_bgra, error_bgra
+
+
+def load_state_frames(size: int, facing: str = 'left', skin: str = DEFAULT_SKIN,
+                      ) -> dict[str, list[bytes]]:
+    """Load named visual states with safe fallbacks for incomplete skin packs."""
+    paths = _action_paths(_get_skin_dir(skin))
+    frames = {name: [_load_one(path, size, facing) for path in action_paths]
+              for name, action_paths in paths.items()}
+    frames['listening'] = frames['listening'] or frames['idle']
+    frames['thinking'] = frames['thinking'] or frames['run']
+    frames['success'] = frames['success'] or frames['idle']
+    frames['streaming'] = frames['thinking']
+    return frames

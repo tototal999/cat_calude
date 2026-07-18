@@ -37,6 +37,7 @@ SCHEDULE_FILE = settings.SCHEDULE_FILE
 import logging
 import logging.handlers
 import os
+import queue
 import subprocess
 import sys
 import threading
@@ -56,6 +57,9 @@ import api
 from backend.services import llm_service as llm
 from backend.services import local_llm
 from backend.services import codex_limits
+from backend.services.tray_service import TrayService
+from pet.state_machine import PetState, PetStateMachine
+from plugins import builtin as builtin_plugins
 import scheduler as scheduler_mod
 import spritecat
 import winalpha
@@ -175,6 +179,9 @@ class ClaudeCat:
         self._chat_open = False       # True while chat window is visible
         self._pre_chat_size: int | None = None  # size before shrink
         self._quick_window: tk.Toplevel | None = None
+        self._quick_entry: tk.Entry | None = None
+        self.pet_state = PetStateMachine()
+        self._tray_actions: queue.SimpleQueue[str] = queue.SimpleQueue()
 
         self.root.wm_attributes('-topmost', self.topmost.get())
         self.w = self.h = size
@@ -246,6 +253,12 @@ class ClaudeCat:
         self.badge.pack()
         self._last_badge_state: tuple[str, str, str] | None = None
         self._place_badge()
+        icon_path = Path(getattr(sys, '_MEIPASS', Path(__file__).parent)) / 'claudecat.ico'
+        self.tray = TrayService(icon_path, self._on_tray_action)
+        self.tray_available = self.tray.start()
+        if not self.tray_available:
+            logger.warning('system tray is unavailable')
+        self.root.after(150, self._drain_tray_actions)
 
         self._bind_mouse()
         # v6.1 intentionally does not call Claude or Codex for usage data.
@@ -294,9 +307,12 @@ class ClaudeCat:
 
     def _open_quick_question(self) -> None:
         """Show the small, cat-adjacent Qwen question bubble (no webview)."""
+        self._set_pet_state(PetState.LISTENING)
         if self._quick_window is not None and self._quick_window.winfo_exists():
             self._quick_window.deiconify()
             self._quick_window.lift()
+            if self._quick_entry is not None:
+                self._quick_entry.focus_set()
             return
 
         win = tk.Toplevel(self.root)
@@ -319,6 +335,7 @@ class ClaudeCat:
                   activeforeground='#ffffff').pack(side='right')
         entry = tk.Entry(outer, bg='#303236', fg='#f1f3f4', insertbackground='#ffffff',
                          relief='flat', font=('Segoe UI', 10))
+        self._quick_entry = entry
         entry.pack(fill='x', padx=8, pady=4, ipady=5)
         answer = tk.Label(outer, text='輸入問題後按 Enter', justify='left', anchor='w',
                           wraplength=328, bg='#202225', fg='#aab0b7', font=('Segoe UI', 9))
@@ -329,6 +346,7 @@ class ClaudeCat:
             if not question:
                 return 'break'
             entry.configure(state='disabled')
+            self._set_pet_state(PetState.THINKING)
             answer.configure(text='思考中…', fg='#aab0b7')
 
             def work():
@@ -340,11 +358,16 @@ class ClaudeCat:
                 def done():
                     if not win.winfo_exists():
                         return
+                    self._set_pet_state(PetState.STREAMING)
                     text = result.get('content') or f'無法回答：{result.get("error", "未知錯誤")}'
                     answer.configure(text=text, fg='#f1f3f4')
                     entry.configure(state='normal')
                     entry.delete(0, 'end')
                     self._last_interact = time.time()
+                    self._set_pet_state(PetState.SUCCESS if result.get('content') else PetState.ERROR)
+                    if self._is_long_answer(text):
+                        win.withdraw()
+                        self._show_answer_panel(text)
                 self.root.after(0, done)
 
             threading.Thread(target=work, daemon=True).start()
@@ -352,8 +375,63 @@ class ClaudeCat:
 
         entry.bind('<Return>', ask)
         win.bind('<Escape>', lambda _event: win.destroy())
-        win.bind('<Destroy>', lambda _event: setattr(self, '_quick_window', None))
+        win.bind('<Destroy>', lambda _event: (setattr(self, '_quick_window', None),
+                                               setattr(self, '_quick_entry', None)))
+        win.bind('<Destroy>', lambda _event: self._set_pet_state(PetState.IDLE), add='+')
         entry.focus_set()
+
+    def _set_pet_state(self, state: PetState) -> None:
+        """Apply a valid visual-state transition without blocking the UI."""
+        previous = self.pet_state.current
+        if not self.pet_state.transition(state):
+            logger.debug('ignored pet state transition: %s -> %s', previous, state)
+            return
+        if previous != state:
+            logger.info('pet state: %s -> %s', previous.value, state.value)
+            self._last_interact = time.time()
+
+    @staticmethod
+    def _is_long_answer(text: str) -> bool:
+        return len(text) > 180 or text.count('\n') >= 4
+
+    def _show_answer_panel(self, text: str) -> None:
+        """Show a dismissible, cat-adjacent card for a long Qwen answer."""
+        panel = tk.Toplevel(self.root)
+        panel.overrideredirect(True)
+        panel.wm_attributes('-topmost', True)
+        panel.configure(bg='#202225')
+        x = min(self.root.winfo_x() + self.w + 8, self.root.winfo_screenwidth() - 430)
+        y = max(0, self.root.winfo_y() - 80)
+        panel.geometry(f'420x300+{x}+{y}')
+
+        outer = tk.Frame(panel, bg='#202225', highlightbackground='#4f8cff', highlightthickness=1)
+        outer.pack(fill='both', expand=True)
+        tk.Label(outer, text='回答', bg='#202225', fg='#f1f3f4',
+                 font=('Segoe UI', 10, 'bold')).pack(anchor='w', padx=10, pady=(8, 3))
+        body = tk.Text(outer, wrap='word', bg='#303236', fg='#f1f3f4',
+                       insertbackground='#ffffff', relief='flat', font=('Segoe UI', 10),
+                       padx=8, pady=7)
+        body.insert('1.0', text)
+        body.configure(state='disabled')
+        body.pack(fill='both', expand=True, padx=9, pady=(0, 7))
+        buttons = tk.Frame(outer, bg='#202225')
+        buttons.pack(fill='x', padx=8, pady=(0, 8))
+
+        def close() -> None:
+            panel.destroy()
+            self._set_pet_state(PetState.IDLE)
+
+        def copy() -> None:
+            self.root.clipboard_clear()
+            self.root.clipboard_append(text)
+
+        tk.Button(buttons, text='複製', command=copy, relief='flat', bd=0,
+                  bg='#303236', fg='#f1f3f4').pack(side='left', padx=(0, 5))
+        tk.Button(buttons, text='繼續問', command=lambda: (close(), self._open_quick_question()),
+                  relief='flat', bd=0, bg='#303236', fg='#f1f3f4').pack(side='left')
+        tk.Button(buttons, text='收合', command=close, relief='flat', bd=0,
+                  bg='#303236', fg='#f1f3f4').pack(side='right')
+        panel.bind('<Escape>', lambda _event: close())
 
     def _place_badge(self) -> None:
         self.badge_win.update_idletasks()
@@ -393,6 +471,7 @@ class ClaudeCat:
 
     def _quit(self) -> None:
         self._save_config()  # position is only captured here, on clean exit
+        self.tray.stop()
         self.root.destroy()
 
     def _set_topmost(self) -> None:
@@ -402,12 +481,22 @@ class ClaudeCat:
         self._save_config()
 
     def _render_cat(self) -> None:
-        (self.idle_buffer, self.frame_buffers, self.sleep_frames,
-         self.error_frames) = spritecat.load_sprite_frames(
+        self.state_frames = spritecat.load_state_frames(
             self.cat_size.get(),
             facing='right' if self.facing_right.get() else 'left',
             skin=self.current_skin.get())
+        self.idle_buffer = self.state_frames['idle'][0]
+        self.frame_buffers = self.state_frames['run']
+        self.sleep_frames = self.state_frames['sleep']
+        self.error_frames = self.state_frames['error']
+        self._action_frame_indices: dict[str, int] = {}
         self._error_frame_idx = 0
+
+    def _draw_state_frame(self, action: str) -> None:
+        frames = self.state_frames[action]
+        index = self._action_frame_indices.get(action, 0) % len(frames)
+        self.canvas.draw(frames[index])
+        self._action_frame_indices[action] = index + 1
 
     def _apply_look(self) -> None:
         """Re-render after a size/direction change from the menu."""
@@ -431,6 +520,13 @@ class ClaudeCat:
         m.add_command(label='排程...', command=self._open_schedule)
         m.add_command(label='交談...', command=self._open_chat)
         m.add_command(label='文件助手...', command=self._open_documents)
+
+        plugin_menu = tk.Menu(m, tearoff=0)
+        for action in builtin_plugins.actions():
+            plugin_menu.add_command(label=action.label,
+                                    command=lambda action_id=action.action_id:
+                                    self._run_plugin_action(action_id))
+        m.add_cascade(label='Plugins', menu=plugin_menu)
 
         skin_menu = tk.Menu(m, tearoff=0)
         for name in spritecat.list_skins():
@@ -492,6 +588,59 @@ class ClaudeCat:
     def _open_documents(self) -> None:
         import backend.window_main as chatwin
         chatwin.request_open('documents')
+
+    def _run_plugin_action(self, action_id: str) -> None:
+        """Dispatch only declared built-in actions; plugins cannot run code."""
+        actions = {
+            'quick_question': self._open_quick_question,
+            'documents': self._open_documents,
+        }
+        action = actions.get(action_id)
+        if action is None:
+            logger.warning('rejected unknown plugin action: %s', action_id)
+            return
+        action()
+
+    def _on_tray_action(self, action_id: str) -> None:
+        """pystray runs on its own thread; enqueue work for Tk's main loop."""
+        self._tray_actions.put(action_id)
+
+    def _drain_tray_actions(self) -> None:
+        """Run queued tray actions on the Tk thread; never call Tk from pystray."""
+        actions = {
+            'show': self._show_cat,
+            'hide': self._hide_cat,
+            'quick_question': lambda: self._run_plugin_action('quick_question'),
+            'documents': lambda: self._run_plugin_action('documents'),
+            'quit': self._quit,
+        }
+        while True:
+            try:
+                action_id = self._tray_actions.get_nowait()
+            except queue.Empty:
+                break
+            action = actions.get(action_id)
+            if action is None:
+                logger.warning('rejected unknown tray action: %s', action_id)
+            else:
+                action()
+                if action_id == 'quit':
+                    return
+        if self.root.winfo_exists():
+            self.root.after(150, self._drain_tray_actions)
+
+    def _show_cat(self) -> None:
+        self.root.deiconify()
+        self.root.lift()
+        if self.show_pct.get():
+            self.badge_win.deiconify()
+            self._place_badge()
+
+    def _hide_cat(self) -> None:
+        self.root.withdraw()
+        self.badge_win.withdraw()
+        if self._quick_window is not None and self._quick_window.winfo_exists():
+            self._quick_window.withdraw()
 
     def _on_chat_open(self) -> None:
         """Shrink cat to 32px and dock beside the chat window (spec 2.1,
@@ -809,6 +958,8 @@ class ClaudeCat:
     def _should_show_error_pose(self) -> bool:
         """Error pose (if the skin has one) replaces the gentle default
         animation when there's an error, or no usage data has come in yet."""
+        if self.pet_state.current == PetState.ERROR and self.error_frames:
+            return True
         if not self.error_frames or not self._monitor_active():
             return False
         return bool(self._effective_error()) or self._effective_usage() is None
@@ -831,6 +982,15 @@ class ClaudeCat:
     def _animate(self) -> None:
         self._drain_cards()
         self._update_badge()
+        state = self.pet_state.current
+        if state in (PetState.THINKING, PetState.STREAMING):
+            self._draw_state_frame('thinking' if state == PetState.THINKING else 'streaming')
+            self.root.after(120, self._animate)
+            return
+        if state in (PetState.LISTENING, PetState.SUCCESS):
+            self._draw_state_frame('listening' if state == PetState.LISTENING else 'success')
+            self.root.after(250, self._animate)
+            return
         if self._should_sleep():
             # Static, not animated: one sleep frame (the first, by filename
             # sort - e.g. cowcat_sleep_07.png) is enough.

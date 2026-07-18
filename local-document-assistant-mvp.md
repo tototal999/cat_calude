@@ -55,6 +55,24 @@
 - Claude／Codex limits 是與聊天／文件助手完全獨立的可選監控。兩個開關預設 OFF；一般聊天與文件問答不使用其登入憑證、CLI 或 app-server。
 - Claude／Codex 開啟前都必須由該電腦使用者明確同意；若兩者皆未安裝或未登入，顯示 `No use` 且不發出查詢。Claude 開啟後輪詢既有 usage API；Codex 啟用後以本機 app-server 的 `account/rateLimits/read` 讀取用量，不直接讀取、顯示、保存或上傳 token；此為非官方相容方式，Codex 更新後可能失效。
 
+## OpenPets-style 桌寵演進
+
+保留 Python／Tkinter 與既有服務，不導入 Electron、Node.js 或 OpenPets 程式碼；只借用其本機優先、狀態驅動與可選模組的產品概念。
+
+1. `PetState`：`IDLE → LISTENING → THINKING → STREAMING → SUCCESS / ERROR → IDLE`。
+2. 單擊貓維持貼身輸入泡泡；短答留在泡泡，長答展開貼身卡片（複製、繼續問、收合），不開 WebView。
+3. 後續才拆分 UI／服務／plugin 邊界；第一版不做動態下載插件或讓插件讀取 token、檔案、任意網路。
+
+### 素材缺口（2026-07-18）
+
+現有素材可安全 fallback：缺少專用動作時，`idle` 使用第一張 run 圖，`LISTENING`／`SUCCESS` 使用 idle，`THINKING`／`STREAMING` 使用 run，`ERROR` 沒有專用圖時保持一般動畫。若要完整呈現狀態機，請依下列命名補圖：`<skin>_<action>_<order>.png`。
+
+| skin | 現有 | 建議補圖 |
+|---|---|---|
+| bluecat | run ×6、idle ×1、sleep ×2、error ×2、listening ×2、thinking ×3、success ×2 | 無（2026-07-18 已補齊並接入狀態載入） |
+| cowcat | run ×5、idle ×1、sleep ×2、error ×2、listening ×2、thinking ×3、success ×2 | 無（2026-07-18 已補齊並接入狀態載入） |
+| ragdollcat | run ×6、idle ×1、sleep ×3、error ×2、listening ×2、thinking ×3、success ×2 | 無（2026-07-18 已補齊並接入狀態載入） |
+
 ## 實作進度（2026-07-18）
 
 - 文件工作區已可建立本機索引並檢索 TXT、Markdown、CSV、PDF、DOCX、PPTX 與 XLSX；引用依格式保留行號、PDF 頁碼、Word 段落／標題、投影片或 Excel 工作表與儲存格範圍。
