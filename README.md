@@ -1,13 +1,14 @@
 # ClaudeCat v2
 
-桌面藍貓寵物，跑速反映 Claude 5 小時 session 用量。
+> 規劃中的 v6.1 會將產品定位擴充為「桌面寵物 + 本機文件助手」：文件與量化模型均留在本機；Claude／Codex limits 為獨立可選監控。完整 MVP 規格見 [local-document-assistant-mvp.md](local-document-assistant-mvp.md)。
+
+桌面藍貓寵物與公司內網 Qwen 文件助手。一般聊天與文件問答只使用設定於 `llm.base_url` 的公司內網 Qwen endpoint，不依賴 Claude 或 Codex。Claude／Codex limits 是獨立可選監控，預設 OFF。
 v2 導入 Open WebUI 風格的聊天介面、歷史對話持久化（Sessions）、前後端分離架構，以及可攜式的 Windows EXE 打包修復。
 
 ## 需求
 - Windows 10/11、Python 3.10+（含 tkinter，官方安裝包預設就有）
 - `pip install requests Pillow pandas openpyxl python-pptx pywebview` (`pandas`, `openpyxl`, `python-pptx` 為交談與轉檔功能所需)
-- **Claude Code CLI 已登入**（讀取 `~/.claude/.credentials.json`）
-  ⚠️ **只裝 Claude Desktop 不夠**——Claude Desktop 和 Claude Code CLI 是兩個不同的登入系統，憑證不共用。這隻貓只認 Claude Code CLI 寫入的 `.credentials.json`。安裝：`npm install -g @anthropic-ai/claude-code` → `claude login`
+- 公司內網 Qwen endpoint 設定於 `%LOCALAPPDATA%\ClaudeCat\config.json`；聊天與文件功能不需要 Claude Code、Codex、Ollama 或其登入憑證。
 
 ## 執行
 ```bash
@@ -15,9 +16,7 @@ python cat.py
 ```
 - 左鍵拖曳移動（貓或 % 徽章皆可）
 - 右鍵選單：包含「交談...」、「排程...」等功能，可開啟現代化 WebView 聊天介面。
-- 貓下方預設顯示用量徽章：`session% Wweekly% | 重置時間`。
-- **session 或週限額任一超過 90%，徽章變紅色警示**。
-- 用量 0-25% 散步 → 25-50% 小跑 → 50-75% 快跑 → 75-95% 狂奔 → >95% 靜止。
+- 貓以本機互動、排程與閒置狀態呈現動畫；需要時可在設定中開啟 Claude limits。Codex limits 設定可獨立開關，但目前尚無正式資料來源，因此不會呼叫 Codex。
 
 ## 🌟 最新功能 (v6.0)
 
@@ -79,6 +78,22 @@ pyinstaller ClaudeCat.spec --clean -y
     "base_url": "http://your-host:8000/v1",
     "model": "your-model-name",
     "api_key": ""
+  }
+}
+```
+
+### 離線本機模型（v6.1）
+
+公司安裝包將 `llama-server.exe` 與 GGUF 模型放在 `%LOCALAPPDATA%\ClaudeCat\` 後，可於同一份 `config.json` 啟用。程式只會啟動 `127.0.0.1` 的服務，結束時一併停止；若檔案不存在，會明確顯示原因。一般聊天與文件問答預設使用 `llm.base_url` 設定的公司內網 Qwen endpoint；sidecar 是未來無內網時的備援。
+
+```json
+{
+  "local_llm": {
+    "enabled": true,
+    "server": "llama-server.exe",
+    "model": "company-model.gguf",
+    "model_id": "company-local-model",
+    "port": 8080
   }
 }
 ```

@@ -53,6 +53,7 @@ from datetime import datetime
 
 import api
 from backend.services import llm_service as llm
+from backend.services import local_llm
 import scheduler as scheduler_mod
 import spritecat
 import winalpha
@@ -149,7 +150,11 @@ class ClaudeCat:
         self.current_skin = tk.StringVar(value=skin)
         um = cfg.get('usage_monitor', {})
         self.monitor_enabled = tk.BooleanVar(
-            value=bool(um.get('enabled', True)) if isinstance(um, dict) else True)
+            value=bool(um.get('enabled', False)) if isinstance(um, dict) else False)
+        codex = cfg.get('codex_limits', {})
+        self.codex_limits_enabled = tk.BooleanVar(
+            value=bool(codex.get('enabled', False)) if isinstance(codex, dict) else False)
+        api.set_usage_api_enabled(self.monitor_enabled.get())
         # 'live' | 'error' | 'full': lets you preview the sleep/frozen poses
         # from the right-click menu instead of waiting for the real thing.
         # Deliberately not persisted - a forgotten forced state would look
@@ -223,6 +228,7 @@ class ClaudeCat:
         self._place_badge()
 
         self._bind_mouse()
+        # v6.1 intentionally does not call Claude or Codex for usage data.
         self._start_poll_thread()
         self._animate()
         self.root.after(2000, self._schedule_tick)
@@ -284,6 +290,7 @@ class ClaudeCat:
             'topmost': self.topmost.get(),
             'show_pct': self.show_pct.get(),
             'usage_monitor': {'enabled': self.monitor_enabled.get()},
+            'codex_limits': {'enabled': self.codex_limits_enabled.get()},
             'x': self.root.winfo_x(),
             'y': self.root.winfo_y(),
         })
@@ -329,10 +336,10 @@ class ClaudeCat:
     def _menu(self, e: tk.Event) -> None:
         m = tk.Menu(self.root, tearoff=0)
         m.add_command(label=self._status_text(), state='disabled')
-        m.add_command(label='Refresh now', command=self._poll_once_async)
         m.add_separator()
         m.add_command(label='排程...', command=self._open_schedule)
         m.add_command(label='交談...', command=self._open_chat)
+        m.add_command(label='文件助手...', command=self._open_documents)
 
         skin_menu = tk.Menu(m, tearoff=0)
         for name in spritecat.list_skins():
@@ -360,12 +367,12 @@ class ClaudeCat:
         sm = tk.Menu(parent, tearoff=0)
         sm.add_checkbutton(label='Always on top', variable=self.topmost,
                            command=self._set_topmost)
-        sm.add_checkbutton(label='Show usage %', variable=self.show_pct,
-                           command=self._save_config)
-        monitor_label = '用量監控（異常）' if (self.monitor_enabled.get()
-                                              and self.monitor_unavailable) else '用量監控'
+        monitor_label = 'Claude limits（異常）' if (self.monitor_enabled.get()
+                                                    and self.monitor_unavailable) else 'Claude limits'
         sm.add_checkbutton(label=monitor_label, variable=self.monitor_enabled,
                            command=self._toggle_monitor)
+        sm.add_checkbutton(label='Codex limits（尚無正式資料來源）',
+                           variable=self.codex_limits_enabled, command=self._toggle_codex_limits)
         sm.add_checkbutton(label='Face right', variable=self.facing_right,
                            command=self._apply_look)
         sm.add_separator()
@@ -390,6 +397,10 @@ class ClaudeCat:
     def _open_chat(self) -> None:
         import backend.window_main as chatwin
         chatwin.request_open('chat')
+
+    def _open_documents(self) -> None:
+        import backend.window_main as chatwin
+        chatwin.request_open('documents')
 
     def _on_chat_open(self) -> None:
         """Shrink cat to 32px and dock beside the chat window (spec 2.1,
@@ -447,24 +458,12 @@ class ClaudeCat:
         self.root.after(400, self._dock_tick)
 
     def _sync_usage_status(self) -> None:
-        """Inject current usage into chat system prompt (spec 2.2)."""
+        """Limits monitoring never changes the chat/document prompt."""
         import backend.window_main as chatwin
-        if not self._monitor_active():
-            chatwin.set_usage_status('目前用量監控已關閉，無法提供用量數據。')
-        elif self.error:
-            chatwin.set_usage_status(f'目前用量監控異常：{self.error}')
-        elif self.usage_pct is not None:
-            parts = [f'目前狀態：session 用量 {self.usage_pct:.0f}%']
-            if self.weekly_pct is not None:
-                parts.append(f'weekly {self.weekly_pct:.0f}%')
-            reset = self._to_local_hhmm(self.resets_at)
-            if reset:
-                parts.append(f'重置倒數 {reset}')
-            chatwin.set_usage_status('，'.join(parts) + '。')
-        else:
-            chatwin.set_usage_status('用量數據尚未取得。')
+        chatwin.set_usage_status('')
 
     def _toggle_monitor(self) -> None:
+        api.set_usage_api_enabled(self.monitor_enabled.get())
         self._save_config()
         if self.monitor_enabled.get():
             self._poll_once_async()   # turn ON: refresh right away
@@ -477,6 +476,11 @@ class ClaudeCat:
             self.monitor_unavailable = False
             self._consec_failures = 0
         logger.info('usage monitor %s', 'ON' if self.monitor_enabled.get() else 'OFF')
+
+    def _toggle_codex_limits(self) -> None:
+        """Persist the independent Codex switch without invoking Codex."""
+        self._save_config()
+        logger.info('codex limits requested=%s; no provider available', self.codex_limits_enabled.get())
 
     def _schedule_tick(self) -> None:
         """30s tick on the tk after() loop (spec: no new thread)."""
@@ -706,6 +710,8 @@ class ClaudeCat:
         threading.Thread(target=self._poll_forever, daemon=True).start()
 
     def _poll_once_async(self) -> None:
+        if not self.monitor_enabled.get():
+            return
         threading.Thread(target=self._poll_once, daemon=True).start()
 
     def _poll_forever(self) -> None:
@@ -834,11 +840,16 @@ if __name__ == '__main__':
         try:
             app = ClaudeCat()
             llm.init(CONFIG_FILE)
+            runtime = local_llm.init(CONFIG_FILE)
+            if runtime.get('endpoint'):
+                llm.use_local_endpoint(runtime['endpoint'], runtime.get('model', ''))
+            logger.info('local llm: %s', runtime['status'])
             chatwin.init(app.scheduler, app._on_chat_open, app._on_chat_close)
             app.root.mainloop()
         except Exception:
             logger.exception('crashed')
         finally:
+            local_llm.stop()
             # Unblock/close the webview side so the main thread can exit.
             chatwin.shutdown()
 

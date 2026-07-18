@@ -1,4 +1,5 @@
 from backend.services import llm_service as llm
+from backend.services import document_service as documents
 from config import settings
 import json
 import uuid
@@ -78,6 +79,92 @@ class JsApi:
         if result and len(result) > 0:
             return result[0]
         return None
+
+    # ---- Local document assistant (v6.1) ----
+
+    def open_document_dialog(self):
+        if wm._window is None:
+            return None
+        file_types = ('文件 (*.txt;*.md;*.csv;*.pdf;*.docx;*.pptx;*.xlsx)', '所有檔案 (*.*)')
+        result = wm._window.create_file_dialog(webview.OPEN_DIALOG, allow_multiple=False, file_types=file_types)
+        return result[0] if result else None
+
+    def ingest_document(self, path):
+        return documents.ingest(path)
+
+    def list_documents(self):
+        return documents.list_documents()
+
+    def remove_document(self, document_id):
+        return documents.remove(document_id)
+
+    def query_document(self, document_id, question):
+        evidence = documents.query(document_id, question)
+        if evidence.get('error') or not evidence.get('sources'):
+            return evidence
+        source_text = '\n\n'.join(
+            f'[{item["source"]["document_name"]} · {item["source"].get("locator", "來源定位不可用")}]\n{item["excerpt"]}'
+            for item in evidence['sources'])
+        messages = [
+            {'role': 'system', 'content': (
+                '你是離線文件助手。只能根據提供的文件來源回答，不可補充外部知識或猜測。'
+                '若來源不足，回答「此文件沒有描述此問題，無法依文件確認。」。'
+                '回答使用繁體中文，簡潔。')},
+            {'role': 'user', 'content': f'問題：{question}\n\n文件來源：\n{source_text}'},
+        ]
+        result = llm.chat(messages, model=wm._current_model, timeout=180)
+        if result.get('error'):
+            evidence['answer'] = f'文件 LLM 無法回答：{result["error"]}\n以下保留可驗證來源。'
+            return evidence
+        evidence['answer'] = result['content']
+        evidence['local_llm_used'] = True
+        return evidence
+
+    def document_action(self, document_id, action):
+        actions = {
+            'summary': '以條列方式摘要這份文件的重點、適用對象與注意事項。',
+            'sop': '整理這份文件中明確描述的流程或 SOP，按順序列出；未描述的步驟不可補充。',
+            'table': '將文件中可比較的重複資訊整理成 Markdown 表格；若來源不足以形成表格，請明確說明。',
+        }
+        instruction = actions.get(action)
+        if instruction is None:
+            return {'error': '未知的文件操作。'}
+        evidence = documents.context(document_id)
+        if evidence.get('error'):
+            return evidence
+        source_text = '\n\n'.join(
+            f'[{item["source"]["document_name"]} · {item["source"].get("locator", "來源定位不可用")}]\n{item["excerpt"]}'
+            for item in evidence['sources'])
+        result = llm.chat([
+            {'role': 'system', 'content': (
+                '你是離線文件助手。只能根據提供的文件來源回答，不可補充外部知識或猜測。'
+                '回答使用繁體中文，簡潔。')},
+            {'role': 'user', 'content': f'{instruction}\n\n文件來源：\n{source_text}'},
+        ], model=wm._current_model, timeout=180)
+        if result.get('error'):
+            return {'answer': f'文件 LLM 無法回答：{result["error"]}', 'sources': evidence['sources']}
+        return {'answer': result['content'], 'sources': evidence['sources'], 'local_llm_used': True}
+
+    def compare_documents(self, first_id, second_id):
+        first = documents.context(first_id)
+        second = documents.context(second_id)
+        if first.get('error'):
+            return first
+        if second.get('error'):
+            return second
+        sources = [*first['sources'], *second['sources']]
+        source_text = '\n\n'.join(
+            f'[{item["source"]["document_name"]} · {item["source"].get("locator", "來源定位不可用")}]\n{item["excerpt"]}'
+            for item in sources)
+        result = llm.chat([
+            {'role': 'system', 'content': (
+                '你是離線文件助手。只能根據提供的兩份文件來源比較相同點、差異與缺漏，'
+                '不可補充外部知識或猜測。使用繁體中文及 Markdown 表格。')},
+            {'role': 'user', 'content': f'比較下列兩份文件：\n\n{source_text}'},
+        ], model=wm._current_model, timeout=180)
+        if result.get('error'):
+            return {'answer': f'文件 LLM 無法回答：{result["error"]}', 'sources': sources}
+        return {'answer': result['content'], 'sources': sources, 'local_llm_used': True}
 
 
     def list_sessions(self):

@@ -12,7 +12,40 @@
 
 ---
 
-## 🔴 現在卡在這（唯一 blocker）
+## v6.1 — 本機文件助手（2026-07-18）
+
+> 規格來源：[local-document-assistant-mvp.md](local-document-assistant-mvp.md)。
+> 前提：此功能採離線安裝包；不要求使用者安裝 Ollama、操作命令列或下載模型／Python 套件。
+
+### 文件助手 MVP
+
+- [x] P6-1. 建立「聊聊天」與「拖文件給我」兩個入口，拖檔後開啟文件工作區。（2026-07-18：pywebview 文件頁與桌寵右鍵入口）
+- [o] P6-2. 已在文件索引中整合本機 MarkItDown 轉 Markdown；仍待將 Python runtime／sidecar 隨公司離線安裝包封裝，並由主程式以 `127.0.0.1` 生命週期管理。（2026-07-18）
+- [x] P6-3. 支援 PDF、DOCX、PPTX、XLSX、CSV、Markdown、TXT 轉換，並保留來源 metadata。（2026-07-18：離線原生解析）
+- [x] P6-4. 實作來源定位：PDF 頁碼、Word 標題／段落、PPT 投影片、Excel 工作表與儲存格範圍；不得從 Markdown 猜測 PDF 頁碼。（2026-07-18）
+- [x] P6-5. 本機切塊與檢索：只將相關區塊交給公司內網 Qwen（`llm.base_url`）或未來 GGUF／llama.cpp 相容模型。（2026-07-18：文件問答已接至既有 LLM client，內網 Qwen 最小 chat-completions request 實測通過）
+- [x] P6-6. 預設開啟「只回答文件內容」；無證據時回覆「此文件沒有描述此問題，無法依文件確認。」（2026-07-18：本機 evidence-first 檢索）
+- [x] P6-7. 由 metadata 產生回答引用與相關內容範圍，不接受僅由 LLM 生成的引用。（2026-07-18：檔名、標題與行號）
+- [x] P6-8. 實作摘要、問問題、流程／SOP、整理表格、比較文件與建議問題介面。（2026-07-18）
+- [x] P6-9. 掃描型 PDF 無可擷取文字時提示需 OCR；MVP 不執行 OCR。（2026-07-18）
+- [x] P6-10. 文件索引存於 `%LOCALAPPDATA%\ClaudeCat\documents\`；可移除索引且不刪原始檔，診斷 log 不記錄文件全文。（2026-07-18）
+- [x] P6-10a. 移除聊天頁對 highlight.js CDN 的執行期依賴；離線時仍可閱讀程式碼區塊。（2026-07-18）
+
+### Claude／Codex 用量
+
+Claude／Codex limits 與聊天／文件助手完全獨立。兩個監控開關預設 OFF：Claude 開啟後才輪詢既有 usage API；Codex 目前尚無正式資料來源，開關只儲存使用者偏好且不會呼叫 Codex。
+
+### v6.1 驗收
+
+- [ ] P6-A1. 離線安裝後，不需網路、Ollama 或命令列，即可使用一般聊天及文件助手。
+- [x] P6-A2. PDF、DOCX、PPTX、XLSX 各以至少一份測試檔驗證：每項答案事實都有正確來源定位。（2026-07-18：單元測試）
+- [x] P6-A3. 文件未提及的問題不臆測；掃描 PDF 顯示 OCR 限制。（2026-07-18：單元測試）
+
+**2026-07-18 實測紀錄：**公司內網 Qwen endpoint 以既定模型與最小 `chat/completions` request 回應成功；文件問答 bridge 測試確認只傳遞檢索命中的來源內容與定位資訊。
+
+---
+
+## 🔴 v2 現在卡在這（唯一 blocker）
 
 - [x] **P1-0. 實機跑 `verify_pywebview_tk.py`**（`pip install pywebview`）✅ 2026-07-17 GO
   - [x] tkinter 窗 frame N 持續跳動（貓不被卡）— 實測 webview 開啟期間 min 9.0 fps

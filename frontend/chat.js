@@ -5,6 +5,7 @@ let _attachedFile = null;
 let _currentSessionId = null;
 let _timerId = null;
 let _editingEnabled = true;
+let _currentDocumentId = null;
 
 // Fake Prompts Library for "/"
 const PROMPTS = [
@@ -23,9 +24,107 @@ function escapeHtml(value) {
 function showTab(t) {
   document.getElementById('page-chat').classList.remove('active');
   document.getElementById('page-schedule').classList.remove('active');
+  document.getElementById('page-documents').classList.remove('active');
   document.getElementById('page-' + t).classList.add('active');
   document.getElementById('nav-schedule').classList.toggle('active', t === 'schedule');
+  document.getElementById('nav-documents').classList.toggle('active', t === 'documents');
   if (t === 'chat' && !_chatInited) initChat();
+  if (t === 'documents') loadDocuments();
+}
+
+function chooseDocument() {
+  pywebview.api.open_document_dialog().then(path => {
+    if (!path) return;
+    document.getElementById('document-status').textContent = '正在建立本機索引…';
+    pywebview.api.ingest_document(path).then(result => {
+      document.getElementById('document-status').textContent = result.error || '已完成分析';
+      if (result.document) {
+        _currentDocumentId = result.document.id;
+        document.getElementById('document-question-box').style.display = '';
+        document.getElementById('document-actions').style.display = '';
+      }
+      loadDocuments();
+    });
+  });
+}
+
+function loadDocuments() {
+  pywebview.api.list_documents().then(documents => {
+    const list = document.getElementById('document-list');
+    const compare = document.getElementById('compare-document');
+    list.innerHTML = '';
+    compare.innerHTML = '<option value="">選擇另一份文件</option>';
+    documents.forEach(doc => {
+      if (doc.id !== _currentDocumentId) {
+        const option = document.createElement('option');
+        option.value = doc.id;
+        option.textContent = doc.name;
+        compare.appendChild(option);
+      }
+      const row = document.createElement('div');
+      row.className = 'document-row' + (doc.id === _currentDocumentId ? ' active' : '');
+      row.innerHTML = `<button class="document-select">📄 ${escapeHtml(doc.name)} <small>${doc.chunk_count} 個區塊</small></button><button class="document-remove" title="只移除本機索引">×</button>`;
+      row.querySelector('.document-select').onclick = () => {
+        _currentDocumentId = doc.id;
+        document.getElementById('document-question-box').style.display = '';
+        document.getElementById('document-actions').style.display = '';
+        document.getElementById('document-status').textContent = `文件：${doc.name}，已完成分析`;
+        loadDocuments();
+      };
+      row.querySelector('.document-remove').onclick = () => pywebview.api.remove_document(doc.id).then(() => {
+        if (_currentDocumentId === doc.id) {
+          _currentDocumentId = null;
+          document.getElementById('document-question-box').style.display = 'none';
+          document.getElementById('document-actions').style.display = 'none';
+        }
+        loadDocuments();
+      });
+      list.appendChild(row);
+    });
+  });
+}
+
+function askDocument() {
+  const input = document.getElementById('document-question');
+  const question = input.value.trim();
+  if (!_currentDocumentId || !question) return;
+  const answer = document.getElementById('document-answer');
+  answer.textContent = '正在本機檢索…';
+  pywebview.api.query_document(_currentDocumentId, question).then(renderDocumentResult);
+}
+
+function runDocumentAction(action) {
+  if (!_currentDocumentId) return;
+  const answer = document.getElementById('document-answer');
+  answer.textContent = '正在依文件來源整理…';
+  pywebview.api.document_action(_currentDocumentId, action).then(renderDocumentResult);
+}
+
+function compareDocuments() {
+  const otherId = document.getElementById('compare-document').value;
+  if (!_currentDocumentId || !otherId) return;
+  const answer = document.getElementById('document-answer');
+  answer.textContent = '正在依兩份文件來源比較…';
+  pywebview.api.compare_documents(_currentDocumentId, otherId).then(renderDocumentResult);
+}
+
+function useDocumentQuestion(question) {
+  document.getElementById('document-question').value = question;
+  askDocument();
+}
+
+function renderDocumentResult(result) {
+  const answer = document.getElementById('document-answer');
+    if (result.error) { answer.textContent = result.error; return; }
+    answer.innerHTML = `<p>${escapeHtml(result.answer)}</p>`;
+    result.sources.forEach(item => {
+      const source = item.source;
+      const card = document.createElement('div');
+      card.className = 'document-source';
+      card.innerHTML = `<strong>📄 ${escapeHtml(source.document_name)} · ${escapeHtml(source.locator || '來源定位不可用')}</strong><p></p>`;
+      card.querySelector('p').textContent = item.excerpt;
+      answer.appendChild(card);
+    });
 }
 
 function toggleSidebar() {

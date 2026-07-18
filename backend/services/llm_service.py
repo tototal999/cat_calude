@@ -131,6 +131,24 @@ def current_model() -> str:
     return str(_get('model') or '')
 
 
+def use_local_endpoint(endpoint: str, model: str = '') -> None:
+    """Use a loopback llama.cpp endpoint for this process only.
+
+    This deliberately does not overwrite the user's configured remote endpoint.
+    """
+    if not endpoint.startswith('http://127.0.0.1:'):
+        raise ValueError('本機模型端點必須使用 127.0.0.1。')
+    _config['base_url'] = endpoint
+    if model:
+        _config['model'] = model
+
+
+def is_local_endpoint() -> bool:
+    """True only when this process is configured to call a loopback model."""
+    base = str(_get('base_url') or '')
+    return base.startswith('http://127.0.0.1:') or base.startswith('http://localhost:')
+
+
 def max_history_turns() -> int:
     n = _get('max_history_turns')
     return int(n) if isinstance(n, (int, float)) and n > 0 else 20

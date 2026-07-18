@@ -4,8 +4,6 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>ClaudeCat</title>
-<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/styles/github-dark.min.css">
-<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/highlight.min.js"></script>
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -19,6 +17,7 @@
     <button class="btn-new-chat" onclick="newChat()"><span>+</span> New chat</button>
     <nav class="sidebar-nav">
       <button class="nav-item nav-item-static" onclick="showTab('chat')"><span>⌂</span> Chat</button>
+      <button class="nav-item nav-item-static" id="nav-documents" onclick="showTab('documents')"><span>▤</span> 文件助手</button>
       <button class="nav-item nav-item-static" id="nav-schedule" onclick="showTab('schedule')"><span>◷</span> Schedule</button>
     </nav>
     <div class="history-section">
@@ -95,6 +94,21 @@
           <div class="row"><label>Lead time</label><div><input id="f-lead" type="number" min="0" value="0"> minutes <span class="hint">0 = exact time only</span></div></div>
           <div class="row form-actions"><button class="primary" onclick="submitForm()" id="f-submit">Save rule</button><button class="secondary" onclick="resetForm()">Clear</button><span id="f-msg"></span></div>
         </form>
+      </div>
+    </section>
+
+    <section id="page-documents" class="page document-page">
+      <div class="document-content">
+        <div class="page-heading"><p class="eyebrow">LOCAL DOCUMENT ASSISTANT</p><h1>文件助手</h1><p>文件只在本機建立索引；目前支援 TXT、Markdown 與 CSV。</p></div>
+        <div class="document-toolbar"><button class="primary" onclick="chooseDocument()">拖文件給我／選擇文件</button><span id="document-status" class="hint"></span></div>
+        <div id="document-actions" class="document-actions" style="display:none"><button class="secondary" onclick="runDocumentAction('summary')">摘要</button><button class="secondary" onclick="runDocumentAction('sop')">流程／SOP</button><button class="secondary" onclick="runDocumentAction('table')">整理表格</button><select id="compare-document" aria-label="選擇比較文件"></select><button class="secondary" onclick="compareDocuments()">比較文件</button></div>
+        <div id="document-list" class="document-list"></div>
+        <div id="document-question-box" class="document-question" style="display:none">
+          <label for="document-question">問這份文件</label>
+          <div class="suggested-questions"><button onclick="useDocumentQuestion('這份文件在說什麼？')">這份文件在說什麼？</button><button onclick="useDocumentQuestion('有哪些注意事項？')">有哪些注意事項？</button><button onclick="useDocumentQuestion('誰需要批准？')">誰需要批准？</button></div>
+          <div class="document-ask-row"><input id="document-question" placeholder="例如：有哪些注意事項？"><button class="primary" onclick="askDocument()">送出</button></div>
+        </div>
+        <div id="document-answer" class="document-answer" aria-live="polite"></div>
       </div>
     </section>
   </main>

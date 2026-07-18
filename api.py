@@ -35,6 +35,13 @@ API_URL_PROFILE = 'https://api.anthropic.com/api/oauth/profile'
 CLAUDE_CONFIG_DIR = Path(os.environ.get('CLAUDE_CONFIG_DIR', '')) if os.environ.get('CLAUDE_CONFIG_DIR') else Path.home() / '.claude'
 CLAUDE_CREDENTIALS = CLAUDE_CONFIG_DIR / '.credentials.json'
 _FALLBACK_USER_AGENT = 'claude-code/2.1.204'
+USAGE_API_ENABLED = False  # default OFF; controlled by the desktop menu
+
+
+def set_usage_api_enabled(enabled: bool) -> None:
+    """Allow the optional Claude-limits monitor to make requests."""
+    global USAGE_API_ENABLED
+    USAGE_API_ENABLED = bool(enabled)
 
 
 def read_access_token() -> str | None:
@@ -68,6 +75,8 @@ def api_headers() -> dict[str, str] | None:
 
 def fetch_usage() -> dict[str, Any]:
     """Fetch usage data from the Anthropic OAuth usage API."""
+    if not USAGE_API_ENABLED:
+        return {'error': 'Claude usage monitor disabled'}
     headers = api_headers()
     if not headers:
         return {'error': T['no_token']}
