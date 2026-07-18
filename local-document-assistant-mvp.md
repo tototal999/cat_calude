@@ -14,8 +14,10 @@
 [聊聊天]  [拖文件給我]
 ```
 
-1. **聊聊天**：使用本機 GGUF 模型，經由隨程式附帶的 llama.cpp 相容背景服務推論。
+1. **聊聊天**：預設使用公司內網 Qwen OpenAI-compatible endpoint；未來可選用隨安裝包提供的本機 GGUF／llama.cpp sidecar。
 2. **拖文件給我**：開啟 AI 文件助手工作區；文件、索引、模型請求及產出皆留在使用者電腦。
+
+簡單提問的預設互動是單擊桌面貓，開啟貼在貓旁的輕量輸入泡泡；按 Enter 即直接取得公司內網 Qwen 回答，不開完整聊天視窗。右鍵的「交談…」保留給多輪長對話。
 
 第一版不做語音、多人共用知識庫、文件自動上傳、掃描 PDF OCR 或視覺辨識。偵測到沒有可擷取文字的掃描 PDF 時，必須明確提示「此掃描型 PDF 需先經 OCR 才能閱讀」。
 
@@ -51,7 +53,7 @@
 
 - 一般聊天與文件問答只使用設定於 `llm.base_url` 的公司內網 Qwen OpenAI-compatible endpoint。
 - Claude／Codex limits 是與聊天／文件助手完全獨立的可選監控。兩個開關預設 OFF；一般聊天與文件問答不使用其登入憑證、CLI 或 app-server。
-- Claude 開啟後才輪詢既有 usage API；Codex 開關目前只儲存使用者偏好，因尚無正式資料來源而不會啟動 CLI、讀取憑證或發出請求。
+- Claude／Codex 開啟前都必須由該電腦使用者明確同意；若兩者皆未安裝或未登入，顯示 `No use` 且不發出查詢。Claude 開啟後輪詢既有 usage API；Codex 啟用後以本機 app-server 的 `account/rateLimits/read` 讀取用量，不直接讀取、顯示、保存或上傳 token；此為非官方相容方式，Codex 更新後可能失效。
 
 ## 實作進度（2026-07-18）
 

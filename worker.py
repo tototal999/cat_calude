@@ -1,6 +1,8 @@
 import sys
 from pathlib import Path
 import json
+import csv
+from io import StringIO
 
 for _stream in (sys.stdout, sys.stderr):
     if _stream is not None and hasattr(_stream, 'reconfigure'):
@@ -13,10 +15,31 @@ def main(filepath_str, max_chars=50000):
             print(f"檔案不存在: {p}", file=sys.stderr)
             sys.exit(1)
             
-        if p.suffix.lower() in ('.xlsx', '.xls'):
-            import pandas as pd
-            df = pd.read_excel(p, nrows=10000)
-            content = df.to_csv(index=False)
+        if p.suffix.lower() == '.xlsx':
+            from openpyxl import load_workbook
+            workbook = load_workbook(p, read_only=True, data_only=True)
+            try:
+                output = StringIO()
+                writer = csv.writer(output)
+                for row_no, row in enumerate(workbook.active.iter_rows(values_only=True), start=1):
+                    writer.writerow(['' if value is None else value for value in row])
+                    if row_no >= 10000:
+                        break
+                content = output.getvalue()
+            finally:
+                workbook.close()
+        elif p.suffix.lower() == '.xls':
+            import xlrd
+            workbook = xlrd.open_workbook(p, on_demand=True)
+            try:
+                output = StringIO()
+                writer = csv.writer(output)
+                sheet = workbook.sheet_by_index(0)
+                for row_no in range(min(sheet.nrows, 10000)):
+                    writer.writerow(sheet.row_values(row_no))
+                content = output.getvalue()
+            finally:
+                workbook.release_resources()
         else:
             with p.open('r', encoding='utf-8') as source:
                 content = source.read(max_chars + 1)

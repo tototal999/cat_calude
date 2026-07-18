@@ -21,10 +21,14 @@ from pathlib import Path
 
 GWL_EXSTYLE = -20
 WS_EX_LAYERED = 0x00080000
+WS_EX_TOOLWINDOW = 0x00000080
+WS_EX_APPWINDOW = 0x00040000
 ULW_ALPHA = 2
 AC_SRC_OVER = 0
 AC_SRC_ALPHA = 1
 GA_ROOT = 2
+SW_HIDE = 0
+SW_SHOW = 5
 
 user32 = ctypes.windll.user32
 gdi32 = ctypes.windll.gdi32
@@ -46,6 +50,25 @@ _GetWindowLong = getattr(user32, 'GetWindowLongPtrW', user32.GetWindowLongW)
 _SetWindowLong = getattr(user32, 'SetWindowLongPtrW', user32.SetWindowLongW)
 _GetWindowLong.argtypes = [ctypes.c_void_p, ctypes.c_int]
 _SetWindowLong.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_long]
+user32.ShowWindow.argtypes = [ctypes.c_void_p, ctypes.c_int]
+
+
+def show_in_taskbar(tk_winfo_id: int) -> None:
+    """Make a borderless Tk root appear in the Windows taskbar.
+
+    Tk's ``overrideredirect`` windows are normally hidden from Alt+Tab and
+    the taskbar.  The desktop pet needs that borderless style, but an explicit
+    taskbar item gives users the normal window Close button as a second exit
+    path.  Hiding and showing once makes Explorer re-evaluate the new style.
+    """
+    hwnd = user32.GetAncestor(tk_winfo_id, GA_ROOT)
+    if not hwnd:
+        raise OSError('GetAncestor failed while registering taskbar window')
+    style = _GetWindowLong(hwnd, GWL_EXSTYLE)
+    style = (style | WS_EX_APPWINDOW) & ~WS_EX_TOOLWINDOW
+    _SetWindowLong(hwnd, GWL_EXSTYLE, style)
+    user32.ShowWindow(hwnd, SW_HIDE)
+    user32.ShowWindow(hwnd, SW_SHOW)
 
 
 class _BLENDFUNCTION(ctypes.Structure):

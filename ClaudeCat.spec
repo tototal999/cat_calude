@@ -21,7 +21,7 @@ a = Analysis(
     datas=[('skins', 'skins'), ('frontend', 'frontend'), ('claudecat.ico', '.'),
            (str(_python_root / 'tcl'), 'tcl'),
            (str(_python_root / 'Lib' / 'tkinter'), 'tkinter')],
-    hiddenimports=['tkinter', 'tkinter.ttk', 'pandas', 'openpyxl', 'pptx'],
+    hiddenimports=['tkinter', 'tkinter.ttk', 'openpyxl', 'pptx', 'xlrd'],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
@@ -31,7 +31,8 @@ a = Analysis(
     # win32com/win32api/win32con/pythoncom/pywintypes were excluded before
     # Part 2 - pywebview's Windows (Edge WebView2) backend actually needs
     # them, so only numpy/cryptography/win32ctypes stay excluded now.
-    excludes=['cryptography', 'win32ctypes'],
+    excludes=['cryptography', 'win32ctypes', 'pandas', 'numpy', 'pyarrow',
+              'onnxruntime', 'grpc', 'oracledb', 'pypdfium2'],
     noarchive=False,
     optimize=0,
 )

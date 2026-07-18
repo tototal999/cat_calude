@@ -15,8 +15,9 @@ v2 導入 Open WebUI 風格的聊天介面、歷史對話持久化（Sessions）
 python cat.py
 ```
 - 左鍵拖曳移動（貓或 % 徽章皆可）
+- 單擊貓：開啟貼在貓旁的「問我一句」泡泡，Enter 後直接取得公司內網 Qwen 回答，不開完整聊天視窗。
 - 右鍵選單：包含「交談...」、「排程...」等功能，可開啟現代化 WebView 聊天介面。
-- 貓以本機互動、排程與閒置狀態呈現動畫；需要時可在設定中開啟 Claude limits。Codex limits 設定可獨立開關，但目前尚無正式資料來源，因此不會呼叫 Codex。
+- 貓以本機互動、排程與閒置狀態呈現動畫；Claude／Codex limits 都是可選功能，首次啟用須由每位使用者在自己的電腦同意。未安裝或未登入兩者時，徽章顯示 `No use`，不會查詢。Codex 透過本機 app-server 讀取用量，屬非官方相容方式，可能隨 Codex 更新失效。
 
 ## 🌟 最新功能 (v6.0)
 
@@ -63,12 +64,14 @@ claude-cat/
 ```
 
 ## 打包成 EXE
-本專案採用 `onedir` 模式搭配 Worker 解耦架構（將 `pandas`/`numpy` 等肥大依賴排除於主程序外），確保啟動極速：
+本專案採用 `onedir` 模式；Excel 解析改用 `openpyxl`／`xlrd`，不帶入 `pandas`／`numpy` 等未使用的大型依賴：
 ```bash
 pip install pyinstaller
 pyinstaller ClaudeCat.spec --clean -y
 ```
-產出在 `dist\ClaudeCat`。`skins\` 與 `frontend\` 會一併凍入資料夾中。之後新增皮膚不需重新打包，丟到 exe 旁邊的 `skins\` 資料夾即可。
+產出在 `dist\ClaudeCat`。`skins\` 與 `frontend\` 會一併凍入資料夾中。之後新增皮膚不需重新打包，丟到 exe 旁邊的 `skins\` 資料夾即可。2026-07-18 參考建置約 **73.5 MiB**；已以打包 EXE 驗證 PDF、DOCX、PPTX、XLSX 可完成文件索引。
+
+桌寵會顯示為 Windows 工作列的 `ClaudeCat` 項目；可直接按該項目的關閉按鈕結束程式，位置會照既有流程保存。
 
 ## LLM 交談設定
 **這是公開 repo, 真實端點不寫進程式碼**——實際設定寫在執行期的 `%LOCALAPPDATA%\ClaudeCat\config.json`（不進版控）：

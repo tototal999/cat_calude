@@ -49,11 +49,13 @@ if getattr(sys, 'frozen', False):
     os.environ['TK_LIBRARY'] = str(_bundle_dir / 'tcl' / 'tk8.6')
 
 import tkinter as tk
+from tkinter import messagebox
 from datetime import datetime
 
 import api
 from backend.services import llm_service as llm
 from backend.services import local_llm
+from backend.services import codex_limits
 import scheduler as scheduler_mod
 import spritecat
 import winalpha
@@ -128,8 +130,10 @@ SPEED_TABLE = [
 class ClaudeCat:
     def __init__(self) -> None:
         self.root = tk.Tk()
+        self.root.title('ClaudeCat')
         self.root.overrideredirect(True)
         self.root.wm_attributes('-topmost', True)
+        self.root.protocol('WM_DELETE_WINDOW', self._quit)
 
         # User-toggleable options (right-click menu), seeded from config.json
         cfg = settings.load_config()
@@ -149,11 +153,19 @@ class ClaudeCat:
         self.poll_interval = tk.IntVar(value=poll)
         self.current_skin = tk.StringVar(value=skin)
         um = cfg.get('usage_monitor', {})
+        self.claude_consent_accepted = bool(um.get('consent_accepted', False)) \
+            if isinstance(um, dict) else False
+        self.claude_limits_available = api.CLAUDE_CREDENTIALS.exists()
         self.monitor_enabled = tk.BooleanVar(
-            value=bool(um.get('enabled', False)) if isinstance(um, dict) else False)
+            value=bool(um.get('enabled', False)) and self.claude_consent_accepted
+            if isinstance(um, dict) else False)
         codex = cfg.get('codex_limits', {})
+        self.codex_consent_accepted = bool(codex.get('consent_accepted', False)) \
+            if isinstance(codex, dict) else False
+        self.codex_limits_available = codex_limits.find_executable() is not None
         self.codex_limits_enabled = tk.BooleanVar(
-            value=bool(codex.get('enabled', False)) if isinstance(codex, dict) else False)
+            value=bool(codex.get('enabled', False)) and self.codex_consent_accepted
+            if isinstance(codex, dict) else False)
         api.set_usage_api_enabled(self.monitor_enabled.get())
         # 'live' | 'error' | 'full': lets you preview the sleep/frozen poses
         # from the right-click menu instead of waiting for the real thing.
@@ -162,6 +174,7 @@ class ClaudeCat:
         self.debug_state = tk.StringVar(value='live')
         self._chat_open = False       # True while chat window is visible
         self._pre_chat_size: int | None = None  # size before shrink
+        self._quick_window: tk.Toplevel | None = None
 
         self.root.wm_attributes('-topmost', self.topmost.get())
         self.w = self.h = size
@@ -180,6 +193,10 @@ class ClaudeCat:
         self.error: str | None = None
         self.resets_at: str | None = None
         self.weekly_resets_at: str | None = None
+        self.codex_usage_pct: float | None = None
+        self.codex_weekly_pct: float | None = None
+        self.codex_resets_at: str | None = None
+        self.codex_error: str | None = None
         self._frame_idx = 0
         self._refreshing_token = False
 
@@ -214,6 +231,9 @@ class ClaudeCat:
                     sw, sh, x, y, self.root.winfo_x(), self.root.winfo_y())
         self.canvas = winalpha.LayeredCanvas(self.root.winfo_id(), self.w, self.h)
         self.canvas.draw(self.idle_buffer)
+        # Keep the transparent, borderless pet while exposing a normal
+        # taskbar item.  Its Close button follows _quit() and saves position.
+        winalpha.show_in_taskbar(self.root.winfo_id())
 
         # % badge: a separate opaque mini-window below the cat (a layered
         # window's content comes only from UpdateLayeredWindow, so tkinter
@@ -230,6 +250,7 @@ class ClaudeCat:
         self._bind_mouse()
         # v6.1 intentionally does not call Claude or Codex for usage data.
         self._start_poll_thread()
+        self._start_codex_poll_thread()
         self._animate()
         self.root.after(2000, self._schedule_tick)
         logger.info('started: skin=%s size=%d poll_interval=%d monitor=%s',
@@ -267,8 +288,72 @@ class ClaudeCat:
             self._on_click()
 
     def _on_click(self) -> None:
-        """P1.5-2: Click triggers a small random action (brief sprint here)"""
+        """Open a compact question bubble; dragging keeps its normal behavior."""
         self._boost_until = time.time() + 0.3
+        self._open_quick_question()
+
+    def _open_quick_question(self) -> None:
+        """Show the small, cat-adjacent Qwen question bubble (no webview)."""
+        if self._quick_window is not None and self._quick_window.winfo_exists():
+            self._quick_window.deiconify()
+            self._quick_window.lift()
+            return
+
+        win = tk.Toplevel(self.root)
+        self._quick_window = win
+        win.overrideredirect(True)
+        win.wm_attributes('-topmost', True)
+        win.configure(bg='#202225')
+        x = min(self.root.winfo_x() + self.w + 8, self.root.winfo_screenwidth() - 360)
+        y = max(0, self.root.winfo_y())
+        win.geometry(f'350x118+{x}+{y}')
+
+        outer = tk.Frame(win, bg='#202225', highlightbackground='#4f8cff', highlightthickness=1)
+        outer.pack(fill='both', expand=True)
+        header = tk.Frame(outer, bg='#202225')
+        header.pack(fill='x', padx=8, pady=(7, 2))
+        tk.Label(header, text='🐱 問我一句', bg='#202225', fg='#f1f3f4',
+                 font=('Segoe UI', 10, 'bold')).pack(side='left')
+        tk.Button(header, text='×', command=win.destroy, relief='flat', bd=0,
+                  bg='#202225', fg='#9aa0a6', activebackground='#303236',
+                  activeforeground='#ffffff').pack(side='right')
+        entry = tk.Entry(outer, bg='#303236', fg='#f1f3f4', insertbackground='#ffffff',
+                         relief='flat', font=('Segoe UI', 10))
+        entry.pack(fill='x', padx=8, pady=4, ipady=5)
+        answer = tk.Label(outer, text='輸入問題後按 Enter', justify='left', anchor='w',
+                          wraplength=328, bg='#202225', fg='#aab0b7', font=('Segoe UI', 9))
+        answer.pack(fill='both', expand=True, padx=9, pady=(1, 6))
+
+        def ask(_event=None):
+            question = entry.get().strip()
+            if not question:
+                return 'break'
+            entry.configure(state='disabled')
+            answer.configure(text='思考中…', fg='#aab0b7')
+
+            def work():
+                result = llm.chat([
+                    {'role': 'system', 'content': '你是桌面貓咪助手。請用繁體中文簡短直接回答。'},
+                    {'role': 'user', 'content': question},
+                ], timeout=60)
+
+                def done():
+                    if not win.winfo_exists():
+                        return
+                    text = result.get('content') or f'無法回答：{result.get("error", "未知錯誤")}'
+                    answer.configure(text=text, fg='#f1f3f4')
+                    entry.configure(state='normal')
+                    entry.delete(0, 'end')
+                    self._last_interact = time.time()
+                self.root.after(0, done)
+
+            threading.Thread(target=work, daemon=True).start()
+            return 'break'
+
+        entry.bind('<Return>', ask)
+        win.bind('<Escape>', lambda _event: win.destroy())
+        win.bind('<Destroy>', lambda _event: setattr(self, '_quick_window', None))
+        entry.focus_set()
 
     def _place_badge(self) -> None:
         self.badge_win.update_idletasks()
@@ -289,8 +374,14 @@ class ClaudeCat:
             'poll_interval': self.poll_interval.get(),
             'topmost': self.topmost.get(),
             'show_pct': self.show_pct.get(),
-            'usage_monitor': {'enabled': self.monitor_enabled.get()},
-            'codex_limits': {'enabled': self.codex_limits_enabled.get()},
+            'usage_monitor': {
+                'enabled': self.monitor_enabled.get(),
+                'consent_accepted': self.claude_consent_accepted,
+            },
+            'codex_limits': {
+                'enabled': self.codex_limits_enabled.get(),
+                'consent_accepted': self.codex_consent_accepted,
+            },
             'x': self.root.winfo_x(),
             'y': self.root.winfo_y(),
         })
@@ -371,7 +462,7 @@ class ClaudeCat:
                                                     and self.monitor_unavailable) else 'Claude limits'
         sm.add_checkbutton(label=monitor_label, variable=self.monitor_enabled,
                            command=self._toggle_monitor)
-        sm.add_checkbutton(label='Codex limits（尚無正式資料來源）',
+        sm.add_checkbutton(label='Codex limits（非官方）',
                            variable=self.codex_limits_enabled, command=self._toggle_codex_limits)
         sm.add_checkbutton(label='Face right', variable=self.facing_right,
                            command=self._apply_look)
@@ -463,6 +554,23 @@ class ClaudeCat:
         chatwin.set_usage_status('')
 
     def _toggle_monitor(self) -> None:
+        if self.monitor_enabled.get() and not self.claude_limits_available:
+            self.monitor_enabled.set(False)
+            messagebox.showinfo('Claude limits', 'No use：找不到本機 Claude 登入資料。', parent=self.root)
+            self._save_config()
+            return
+        if self.monitor_enabled.get() and not self.claude_consent_accepted:
+            approved = messagebox.askyesno(
+                '啟用 Claude limits',
+                '此功能會讀取本機 Claude 登入資料，向 Claude 用量 API 查詢目前用量與重置時間。\n\n'
+                '不會顯示、保存或上傳 token；Qwen 聊天與文件助手不受影響。\n'
+                '是否同意啟用？', parent=self.root,
+            )
+            if not approved:
+                self.monitor_enabled.set(False)
+                self._save_config()
+                return
+            self.claude_consent_accepted = True
         api.set_usage_api_enabled(self.monitor_enabled.get())
         self._save_config()
         if self.monitor_enabled.get():
@@ -478,9 +586,34 @@ class ClaudeCat:
         logger.info('usage monitor %s', 'ON' if self.monitor_enabled.get() else 'OFF')
 
     def _toggle_codex_limits(self) -> None:
-        """Persist the independent Codex switch without invoking Codex."""
+        """Require per-user consent before the unofficial reader can run."""
+        if self.codex_limits_enabled.get() and not self.codex_limits_available:
+            self.codex_limits_enabled.set(False)
+            messagebox.showinfo('Codex limits', 'No use：找不到本機 Codex Desktop。', parent=self.root)
+            self._save_config()
+            return
+        if self.codex_limits_enabled.get() and not self.codex_consent_accepted:
+            approved = messagebox.askyesno(
+                '啟用 Codex limits（非官方）',
+                '此功能會透過本機 Codex app-server 讀取目前登入帳號的用量與重置時間。\n\n'
+                '不會顯示、保存或上傳 token；Qwen 聊天與文件助手不受影響。\n'
+                '此為非官方相容方式，Codex 更新後可能失效。是否同意啟用？',
+                parent=self.root,
+            )
+            if not approved:
+                self.codex_limits_enabled.set(False)
+                self._save_config()
+                return
+            self.codex_consent_accepted = True
         self._save_config()
-        logger.info('codex limits requested=%s; no provider available', self.codex_limits_enabled.get())
+        if self.codex_limits_enabled.get():
+            self._poll_codex_once_async()
+        else:
+            self.codex_usage_pct = None
+            self.codex_weekly_pct = None
+            self.codex_resets_at = None
+            self.codex_error = None
+        logger.info('codex limits %s', 'ON' if self.codex_limits_enabled.get() else 'OFF')
 
     def _schedule_tick(self) -> None:
         """30s tick on the tk after() loop (spec: no new thread)."""
@@ -557,7 +690,13 @@ class ClaudeCat:
         """Real error, or a debug-menu override for previewing that state."""
         if self.debug_state.get() == 'error':
             return 'DEBUG: forced error'
-        return self.error
+        if self._effective_usage() is not None:
+            return None
+        if self.monitor_enabled.get() and self.error:
+            return self.error
+        if self.codex_limits_enabled.get() and self.codex_error:
+            return self.codex_error
+        return None
 
     def _effective_usage(self) -> float | None:
         """Real usage %, or a debug-menu override for previewing that state."""
@@ -566,12 +705,19 @@ class ClaudeCat:
             return None
         if ds == 'full':
             return 100.0
-        return self.usage_pct
+        values = []
+        if self.monitor_enabled.get() and self.usage_pct is not None:
+            values.append(self.usage_pct)
+        if self.codex_limits_enabled.get() and self.codex_usage_pct is not None:
+            values.append(self.codex_usage_pct)
+        return max(values) if values else None
 
     def _status_text(self) -> str:
         """Short status line for the menu's top (disabled) entry - same
         compact format as the badge, so the menu window doesn't stretch
         wide with a long sentence (spec-adjacent, user-reported)."""
+        if not self.claude_limits_available and not self.codex_limits_available:
+            return 'No use'
         if not self._monitor_active():
             return '用量監控:OFF'
         error = self._effective_error()
@@ -580,13 +726,12 @@ class ClaudeCat:
             return f'! {error}'
         if usage is None:
             return 'Fetching usage...'
-        text = f'{usage:.0f}%'
-        if self.weekly_pct is not None:
-            text += f' | Week {self.weekly_pct:.0f}%'
-        reset = self._to_local_hhmm(self.resets_at)
-        if reset:
-            text += f' ({reset})'
-        return text
+        parts = []
+        if self.monitor_enabled.get() and self.usage_pct is not None:
+            parts.append(f'Claude {self.usage_pct:.0f}%')
+        if self.codex_limits_enabled.get() and self.codex_usage_pct is not None:
+            parts.append(f'Codex {self.codex_usage_pct:.0f}%')
+        return ' | '.join(parts) or 'Fetching usage...'
 
     @staticmethod
     def _to_local_hhmm(iso: str | None, with_date: bool = False) -> str | None:
@@ -605,7 +750,9 @@ class ClaudeCat:
             return
         error = self._effective_error()
         usage = self._effective_usage()
-        if not self._monitor_active():
+        if not self.claude_limits_available and not self.codex_limits_available:
+            state = (' No use ', '#222222', '#888888')
+        elif not self._monitor_active():
             state = (' OFF ', '#222222', '#888888')
         elif error:
             state = (' ! ', '#aa2222', '#ffffff')
@@ -642,7 +789,8 @@ class ClaudeCat:
     def _monitor_active(self) -> bool:
         """Monitor drives poses/speed only when ON - except the Test menu,
         which may preview any state regardless of the toggle."""
-        return self.monitor_enabled.get() or self.debug_state.get() != 'live'
+        return self.monitor_enabled.get() or self.codex_limits_enabled.get() \
+            or self.debug_state.get() != 'live'
 
     def _should_sleep(self) -> bool:
         """Sleep pose wins over the run cycle when the session quota is fully used up (100%),
@@ -709,10 +857,17 @@ class ClaudeCat:
     def _start_poll_thread(self) -> None:
         threading.Thread(target=self._poll_forever, daemon=True).start()
 
+    def _start_codex_poll_thread(self) -> None:
+        threading.Thread(target=self._poll_codex_forever, daemon=True).start()
+
     def _poll_once_async(self) -> None:
         if not self.monitor_enabled.get():
             return
         threading.Thread(target=self._poll_once, daemon=True).start()
+
+    def _poll_codex_once_async(self) -> None:
+        if self.codex_limits_enabled.get():
+            threading.Thread(target=self._poll_codex_once, daemon=True).start()
 
     def _poll_forever(self) -> None:
         while True:
@@ -725,6 +880,18 @@ class ClaudeCat:
                 time.sleep(2)
                 if not self.monitor_enabled.get():
                     break              # react to an OFF flip mid-wait
+
+    def _poll_codex_forever(self) -> None:
+        while True:
+            if not self.codex_limits_enabled.get():
+                time.sleep(2)
+                continue
+            self._poll_codex_once()
+            deadline = time.time() + self.poll_interval.get()
+            while time.time() < deadline:
+                time.sleep(2)
+                if not self.codex_limits_enabled.get():
+                    break
 
     def _set_unavailable(self, flag: bool, reason: str = '') -> None:
         """Popup exactly once per available->unavailable transition;
@@ -791,6 +958,23 @@ class ClaudeCat:
         self._sync_usage_status()
         return self.poll_interval.get()
 
+    def _poll_codex_once(self) -> None:
+        """Read Codex limits through its local app-server only when enabled."""
+        data = codex_limits.fetch_usage()
+        if 'error' in data:
+            self.codex_error = data['error']
+            logger.warning('codex limits poll failed: %s', self.codex_error)
+            return
+        previous = self.codex_usage_pct
+        self.codex_usage_pct = data['usage_pct']
+        self.codex_weekly_pct = data.get('weekly_pct')
+        self.codex_resets_at = data.get('resets_at')
+        self.codex_error = None
+        if previous is not None and previous != self.codex_usage_pct:
+            self._last_interact = time.time()
+        logger.info('codex limits updated: usage=%.0f%% plan=%s',
+                    self.codex_usage_pct, data.get('plan'))
+
     def _try_refresh_token(self) -> None:
         """On auth expiry, run `claude update` once to refresh the token
         (same approach as usage-monitor-for-claude). Non-blocking, guarded."""
@@ -819,6 +1003,12 @@ if __name__ == '__main__':
             import worker
             max_chars = int(sys.argv[3]) if len(sys.argv) > 3 else 50000
             worker.main(sys.argv[2], max_chars)
+            sys.exit(0)
+        elif sys.argv[1] == '--document-check':
+            from backend.services import document_service
+            result = document_service.ingest(sys.argv[2])
+            if result.get('error'):
+                sys.exit(1)
             sys.exit(0)
         elif sys.argv[1] == '--ppt':
             import worker

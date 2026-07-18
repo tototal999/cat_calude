@@ -1,6 +1,8 @@
 import json
+import io
 import tempfile
 import unittest
+from contextlib import redirect_stdout
 from datetime import datetime, timedelta
 from pathlib import Path
 from unittest.mock import patch
@@ -11,6 +13,7 @@ from backend.services import document_service as documents
 from backend.services import local_llm
 from backend.services import llm_service as llm
 import scheduler
+import worker
 
 
 class SchedulerTests(unittest.TestCase):
@@ -228,6 +231,21 @@ class DocumentServiceTests(unittest.TestCase):
         prompt = chat.call_args.args[0][1]['content']
         self.assertIn('A.md · 第 1 行', prompt)
         self.assertIn('B.md · 第 1 行', prompt)
+
+
+class WorkerTests(unittest.TestCase):
+    def test_xlsx_worker_uses_openpyxl_without_pandas(self):
+        from openpyxl import Workbook
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / 'sample.xlsx'
+            workbook = Workbook()
+            workbook.active.append(['name', 'value'])
+            workbook.active.append(['payment', 30])
+            workbook.save(source)
+            output = io.StringIO()
+            with redirect_stdout(output):
+                worker.main(str(source))
+            self.assertIn('payment,30', output.getvalue())
 
 
 if __name__ == '__main__':
