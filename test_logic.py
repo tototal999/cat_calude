@@ -20,6 +20,7 @@ from backend.services import local_llm
 from backend.services import llm_service as llm
 from backend.services import json_tools
 from backend.services import translation_service
+from backend.services import workflow_service as workflows
 from config import settings
 import backend.window_main as wm
 from pet.state_machine import PetState, PetStateMachine
@@ -584,6 +585,124 @@ class DocumentServiceTests(unittest.TestCase):
         prompt = chat.call_args.args[0][1]['content']
         self.assertIn('A.md · 第 1 行', prompt)
         self.assertIn('B.md · 第 1 行', prompt)
+
+
+class WorkflowTests(unittest.TestCase):
+    DOCUMENT_ID = '550e8400-e29b-41d4-a716-446655440000'
+    EVIDENCE = {
+        'sources': [{
+            'excerpt': '付款期限為收貨後 30 日。',
+            'source': {'document_name': '採購流程.pdf', 'locator': '第 8 頁'},
+        }],
+        'coverage': {'included_chunks': 1, 'total_chunks': 2, 'complete': False},
+    }
+
+    def _directories(self, root):
+        return (
+            patch.object(workflows, 'RUNS_DIR', root / 'runs'),
+            patch.object(workflows, 'ARTIFACTS_DIR', root / 'artifacts'),
+        )
+
+    def test_document_meeting_pack_completes_with_source_bearing_artifact(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            runs_patch, artifacts_patch = self._directories(root)
+            with runs_patch, artifacts_patch, \
+                 patch.object(documents, 'context', return_value=self.EVIDENCE), \
+                 patch.object(llm, 'chat', side_effect=[
+                     {'content': '這是抽樣摘要。', 'model': 'company-doc'},
+                     {'content': '決策：確認付款期限。', 'model': 'company-doc'},
+                 ]):
+                created = workflows.create_document_meeting_pack(self.DOCUMENT_ID)
+                result = workflows.execute(created['run_id'])
+
+            self.assertEqual(result['status'], 'completed')
+            self.assertTrue(all(step['status'] == 'completed' for step in result['steps']))
+            artifact = Path(result['artifacts'][0]['path'])
+            self.assertTrue(artifact.is_file())
+            text = artifact.read_text(encoding='utf-8')
+            self.assertIn('這是抽樣摘要。', text)
+            self.assertIn('決策：確認付款期限。', text)
+            self.assertIn('採購流程.pdf · 第 8 頁', text)
+            self.assertIn('抽樣涵蓋 1/2', text)
+            self.assertEqual(result['model'], 'company-doc')
+
+    def test_later_llm_failure_preserves_completed_summary_as_partial_artifact(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            runs_patch, artifacts_patch = self._directories(root)
+            with runs_patch, artifacts_patch, \
+                 patch.object(documents, 'context', return_value=self.EVIDENCE), \
+                 patch.object(llm, 'chat', side_effect=[
+                     {'content': '已完成摘要。', 'model': 'company-doc'},
+                     {'error': '會議重點模型逾時'},
+                 ]):
+                created = workflows.create_document_meeting_pack(self.DOCUMENT_ID)
+                result = workflows.execute(created['run_id'])
+
+            self.assertEqual(result['status'], 'failed')
+            self.assertEqual(result['steps'][1]['status'], 'completed')
+            self.assertEqual(result['steps'][2]['status'], 'failed')
+            self.assertEqual(result['artifacts'][0]['status'], 'partial')
+            self.assertIn('已完成摘要。',
+                          Path(result['artifacts'][0]['path']).read_text(encoding='utf-8'))
+
+    def test_export_failure_never_marks_workflow_completed(self):
+        def fail_export(_run, _data):
+            raise OSError('磁碟已滿')
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            runs_patch, artifacts_patch = self._directories(root)
+            with runs_patch, artifacts_patch, \
+                 patch.object(documents, 'context', return_value=self.EVIDENCE), \
+                 patch.object(llm, 'chat', side_effect=[
+                     {'content': '摘要。', 'model': 'company-doc'},
+                     {'content': '會議重點。', 'model': 'company-doc'},
+                 ]), patch.dict(workflows._HANDLERS, {'export_markdown': fail_export}):
+                created = workflows.create_document_meeting_pack(self.DOCUMENT_ID)
+                result = workflows.execute(created['run_id'])
+
+            self.assertEqual(result['status'], 'failed')
+            self.assertEqual(result['steps'][-1]['status'], 'failed')
+            self.assertIn('磁碟已滿', result['steps'][-1]['error'])
+
+    def test_cancelled_pending_run_does_not_call_document_or_llm(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            runs_patch, artifacts_patch = self._directories(root)
+            with runs_patch, artifacts_patch, \
+                 patch.object(documents, 'context') as context, \
+                 patch.object(llm, 'chat') as chat:
+                created = workflows.create_document_meeting_pack(self.DOCUMENT_ID)
+                workflows.cancel_run(created['run_id'])
+                result = workflows.execute(created['run_id'])
+
+            self.assertEqual(result['status'], 'cancelled')
+            context.assert_not_called()
+            chat.assert_not_called()
+
+    def test_document_meeting_pack_rejects_non_pdf_docx_input(self):
+        evidence = {
+            **self.EVIDENCE,
+            'sources': [{
+                'excerpt': '文字內容。',
+                'source': {'document_name': 'notes.txt', 'locator': '第 1 行'},
+            }],
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            runs_patch, artifacts_patch = self._directories(root)
+            with runs_patch, artifacts_patch, \
+                 patch.object(documents, 'context', return_value=evidence), \
+                 patch.object(llm, 'chat') as chat:
+                created = workflows.create_document_meeting_pack(self.DOCUMENT_ID)
+                result = workflows.execute(created['run_id'])
+
+            self.assertEqual(result['status'], 'failed')
+            self.assertEqual(result['steps'][0]['status'], 'failed')
+            self.assertIn('只支援 PDF 與 DOCX', result['steps'][0]['error'])
+            chat.assert_not_called()
 
 
 class WorkerTests(unittest.TestCase):

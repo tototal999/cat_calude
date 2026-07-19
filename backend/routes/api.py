@@ -2,9 +2,11 @@ from backend.services import llm_service as llm
 from backend.services import document_service as documents
 from backend.services import json_tools
 from backend.services import translation_service
+from backend.services import workflow_service as workflows
 from config import settings
 import json
 import logging
+import threading
 import uuid
 import time
 import sys
@@ -224,6 +226,27 @@ class JsApi:
                     'coverage': {'first': first_coverage, 'second': second_coverage}}
         return {'answer': result['content'], 'sources': sources,
                 'coverage': {'first': first_coverage, 'second': second_coverage}, 'company_llm_used': True}
+
+    def start_document_meeting_pack(self, document_id, translate=False):
+        run = workflows.create_document_meeting_pack(document_id, bool(translate))
+        if run.get('error'):
+            return run
+        threading.Thread(
+            target=workflows.execute,
+            args=(run['run_id'],),
+            name=f'workflow-{run["run_id"][:8]}',
+            daemon=True,
+        ).start()
+        return run
+
+    def get_workflow_run(self, run_id):
+        return workflows.get_run(run_id)
+
+    def latest_workflow_run(self):
+        return workflows.latest_run()
+
+    def cancel_workflow_run(self, run_id):
+        return workflows.cancel_run(run_id)
 
 
     def list_sessions(self):

@@ -2,7 +2,7 @@
 
 > v6.1 已將產品定位擴充為「桌面寵物 + 本機文件助手」：文件與索引均留在本機；Claude／Codex limits 為獨立可選監控。完整 MVP 規格見 [local-document-assistant-mvp.md](local-document-assistant-mvp.md)。
 > v6.2 再擴充為「桌面 AI 工具箱」，加入 JSON 工具與翻譯分頁，規格見 [desktop-ai-toolbox-mvp.md](desktop-ai-toolbox-mvp.md)。
-> v7 規劃將桌寵定位為 Workflow Launcher，逐步演進為 Local-first「企業 AI 工作台」；第一性原理分析見 [enterprise-ai-workbench-first-principles.md](enterprise-ai-workbench-first-principles.md)。此版本尚未實作。
+> v7 將桌寵定位為 Workflow Launcher，逐步演進為 Local-first「企業 AI 工作台」；第一性原理分析見 [enterprise-ai-workbench-first-principles.md](enterprise-ai-workbench-first-principles.md)。首條「文件會議包」Workflow 已進入開發驗證。
 
 桌面藍貓寵物與公司內網 Qwen 文件助手。一般聊天與文件問答只使用設定於 `llm.base_url` 的公司內網 Qwen endpoint，不依賴 Claude 或 Codex。Claude／Codex limits 是獨立可選監控，預設 OFF。
 專案導入 Open WebUI 風格的聊天介面、歷史對話持久化（Sessions）、前後端分離架構，以及可攜式的 Windows EXE 打包修復。
@@ -41,6 +41,13 @@ python cat.py
 - 貓以本機互動、排程與閒置狀態呈現動畫；Claude／Codex limits 都是可選功能，首次啟用須由每位使用者在自己的電腦同意。未安裝或未登入兩者時，徽章顯示 `No use`，不會查詢；同時顯示兩者時，徽章以 Claude／Codex 上下兩行呈現。Codex 透過本機 app-server 讀取用量，屬非官方相容方式，可能隨 Codex 更新失效。
 
 ## 🌟 最新功能 (v6.2 桌面 AI 工具箱)
+
+### v7 開發中：文件會議包
+
+文件助手選取 PDF／DOCX 後可建立「文件會議包」：
+本機檢索來源、透過文件任務模型產生摘要與會議重點、可選英文翻譯，最後輸出 Markdown。
+UI 會顯示每一步狀態與 Artifact 路徑；後續步驟失敗時，已完成摘要仍保留為部分成果。
+Workflow 只使用公司 LLM 或已啟用的本機 llama.cpp，不會呼叫 Claude／Codex。
 
 ### 1. JSON 工具分頁
 
@@ -100,6 +107,7 @@ claude-cat/
 │   ├── services/
 │   │   ├── llm_service.py          # LLM 客戶端與任務模型路由
 │   │   ├── document_service.py     # 文件索引、切塊、檢索與來源定位
+│   │   ├── workflow_service.py     # 白名單 Workflow、執行狀態與 Artifact
 │   │   ├── json_tools.py           # JSON 工具（本機確定性處理，不呼叫 LLM）
 │   │   ├── translation_service.py  # 翻譯與佔位符保護／還原驗證
 │   │   ├── tray_service.py         # Windows 系統匣

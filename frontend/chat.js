@@ -6,6 +6,7 @@ let _currentSessionId = null;
 let _timerId = null;
 let _editingEnabled = true;
 let _currentDocumentId = null;
+let _workflowPollId = null;
 
 // Fake Prompts Library for "/"
 const PROMPTS = [
@@ -28,7 +29,10 @@ function showTab(t) {
   const nav = document.getElementById('nav-' + t);
   if (nav) nav.classList.add('active');
   if (t === 'chat' && !_chatInited) initChat();
-  if (t === 'documents') loadDocuments();
+  if (t === 'documents') {
+    loadDocuments();
+    pywebview.api.latest_workflow_run().then(renderWorkflowRun);
+  }
   if (t === 'settings') loadToolboxSettings();
 }
 
@@ -132,6 +136,61 @@ function renderDocumentResult(result) {
       card.querySelector('p').textContent = item.excerpt;
       answer.appendChild(card);
     });
+}
+
+function startMeetingPack() {
+  if (!_currentDocumentId) return;
+  const translate = document.getElementById('meeting-pack-translate').checked;
+  const box = document.getElementById('document-workflow');
+  box.textContent = '正在建立 Workflow…';
+  pywebview.api.start_document_meeting_pack(_currentDocumentId, translate).then(run => {
+    renderWorkflowRun(run);
+    if (run.error) return;
+    if (_workflowPollId) clearInterval(_workflowPollId);
+    _workflowPollId = setInterval(() => {
+      pywebview.api.get_workflow_run(run.run_id).then(renderWorkflowRun);
+    }, 700);
+  }).catch(error => { box.textContent = 'Workflow 啟動失敗：' + error; });
+}
+
+function cancelWorkflow(runId) {
+  pywebview.api.cancel_workflow_run(runId).then(renderWorkflowRun);
+}
+
+function renderWorkflowRun(run) {
+  const box = document.getElementById('document-workflow');
+  if (!run || run.error) {
+    if (run && run.error !== '尚無 Workflow 執行紀錄。') box.textContent = run.error;
+    return;
+  }
+  box.innerHTML = '';
+  const title = document.createElement('strong');
+  title.textContent = `文件會議包 · ${run.status}`;
+  box.appendChild(title);
+  const steps = document.createElement('div');
+  steps.className = 'workflow-steps';
+  (run.steps || []).forEach(step => {
+    const row = document.createElement('div');
+    row.textContent = `${step.status === 'completed' ? '✓' : step.status === 'failed' ? '✕' : step.status === 'running' ? '●' : '○'} ${step.id}${step.error ? '：' + step.error : ''}`;
+    steps.appendChild(row);
+  });
+  box.appendChild(steps);
+  (run.artifacts || []).forEach(artifact => {
+    const path = document.createElement('div');
+    path.className = 'workflow-artifact';
+    path.textContent = `${artifact.status === 'complete' ? '成果' : '部分成果'}：${artifact.path}`;
+    box.appendChild(path);
+  });
+  if (run.status === 'pending' || run.status === 'running') {
+    const cancel = document.createElement('button');
+    cancel.className = 'secondary';
+    cancel.textContent = '取消';
+    cancel.onclick = () => cancelWorkflow(run.run_id);
+    box.appendChild(cancel);
+  } else if (_workflowPollId) {
+    clearInterval(_workflowPollId);
+    _workflowPollId = null;
+  }
 }
 
 function toggleSidebar() {

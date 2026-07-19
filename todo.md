@@ -80,30 +80,35 @@ Claude／Codex limits 與聊天／文件助手完全獨立，預設 OFF。兩者
 
 ---
 
-## v7 — 企業 AI 工作台（規劃中，尚未實作）
+## v7 — 企業 AI 工作台（開發中）
 
 > 第一性原理分析與完整邊界見 [enterprise-ai-workbench-first-principles.md](enterprise-ai-workbench-first-principles.md)。
 > 不以 Dashboard 或模型數量作為完成標準；先證明一條 Workflow 能安全產生可交付成果。
 
 ### M0：產品邊界
 
-- [ ] P8-0. 凍結「企業 AI 工作台」定位；AI OS 僅作長期願景。
-- [ ] P8-1. 維持公司 LLM／本機 llama.cpp 路由；Claude／Codex 不參與 Workflow，除非未來另行核准資料政策。
-- [ ] P8-2. 首條垂直 Workflow 確認為「文件會議包」。
+- [x] P8-0. 凍結「企業 AI 工作台」定位；AI OS 僅作長期願景。
+- [x] P8-1. 維持公司 LLM／本機 llama.cpp 路由；Claude／Codex 不參與 Workflow，除非未來另行核准資料政策。
+- [x] P8-2. 首條垂直 Workflow 確認為「文件會議包」。
 
 ### M1：Workflow 核心
 
-- [ ] P8-3. 定義 Workflow Definition、Run、StepResult 與 Artifact。
-- [ ] P8-4. 實作白名單 Step Handler；第一版禁止任意 plugin 執行碼。
+- [x] P8-3. 定義 Workflow Definition、Run、StepResult 與 Artifact。
+- [x] P8-4. 實作白名單 Step Handler；第一版禁止任意 plugin 執行碼。
 - [ ] P8-5. 以 atomic JSON 保存執行狀態；支援完成、失敗、取消與有限重試。
-- [ ] P8-A1. 每一步可追蹤輸入摘要、輸出、時間與安全錯誤；失敗不得標示完成。
+- [x] P8-A1. 每一步可追蹤輸入摘要、輸出、時間與安全錯誤；失敗不得標示完成。
 
 ### M2：文件會議包
 
-- [ ] P8-6. 串接文件解析／檢索 → 摘要 → 會議重點 → 可選翻譯 → Markdown Artifact。
+- [x] P8-6. 串接文件解析／檢索 → 摘要 → 會議重點 → 可選翻譯 → Markdown Artifact。
 - [ ] P8-7. Workspace 顯示目前步驟、來源、coverage 與已完成 Artifact。
 - [ ] P8-A2. 使用者拖入 PDF／DOCX 後三次操作內取得 Markdown；中途失敗仍保留已完成成果。
 - [ ] P8-A3. 以打包 EXE 完成端對端文件會議包驗收。
+
+> 2026-07-19：Workflow 狀態、取消、白名單步驟、部分／完整 Artifact 與背景輪詢 UI 已實作；
+> 業務測試涵蓋完整成功、後段 LLM 失敗保留摘要、匯出失敗不得完成、取消零呼叫與格式拒絕。
+> P8-5 尚缺失敗 Run 的明確有限重試入口；P8-7 尚缺在 Workspace 直接展開 coverage／來源；
+> P8-A2／P8-A3 等待人工與打包 EXE 驗收，因此不先勾選。
 
 ### 後續里程碑
 
