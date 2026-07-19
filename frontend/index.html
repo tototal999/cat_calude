@@ -103,8 +103,8 @@
     <section id="page-documents" class="page document-page">
       <div class="document-content">
         <div class="page-heading"><p class="eyebrow">LOCAL DOCUMENT ASSISTANT</p><h1>文件助手</h1><p>文件在本機建立索引；支援 TXT、Markdown、CSV、PDF、DOCX、PPTX 與 XLSX。</p></div>
-        <div class="document-toolbar"><button class="primary" onclick="chooseDocument()">拖文件給我／選擇文件</button><span id="document-status" class="hint"></span></div>
-        <div id="document-actions" class="document-actions" style="display:none"><button class="primary" onclick="startMeetingPack()">建立文件會議包</button><label class="workflow-option"><input id="meeting-pack-translate" type="checkbox"> 加入英文翻譯</label><button class="secondary" onclick="runDocumentAction('summary')">摘要</button><button class="secondary" onclick="runDocumentAction('sop')">流程／SOP</button><button class="secondary" onclick="runDocumentAction('table')">整理表格</button><select id="compare-document" aria-label="選擇比較文件"></select><button class="secondary" onclick="compareDocuments()">比較文件</button></div>
+        <div class="document-toolbar"><button class="primary" onclick="chooseDocument()">拖文件給我／選擇文件</button><button class="secondary" onclick="clearWorkflowHistory()">清理 Workflow 歷史</button><span id="document-status" class="hint"></span></div>
+        <div id="document-actions" class="document-actions" style="display:none"><button id="meeting-pack-start" class="primary" onclick="startMeetingPack()">建立文件會議包</button><label class="workflow-option"><input id="meeting-pack-translate" type="checkbox"> 加入英文翻譯</label><button class="secondary" onclick="runDocumentAction('summary')">摘要</button><button class="secondary" onclick="runDocumentAction('sop')">流程／SOP</button><button class="secondary" onclick="runDocumentAction('table')">整理表格</button><select id="compare-document" aria-label="選擇比較文件"></select><button class="secondary" onclick="compareDocuments()">比較文件</button></div>
         <div id="document-workflow" class="document-workflow" aria-live="polite"></div>
         <div id="document-list" class="document-list"></div>
         <div id="document-question-box" class="document-question" style="display:none">

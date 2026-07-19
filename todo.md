@@ -95,20 +95,39 @@ Claude／Codex limits 與聊天／文件助手完全獨立，預設 OFF。兩者
 
 - [x] P8-3. 定義 Workflow Definition、Run、StepResult 與 Artifact。
 - [x] P8-4. 實作白名單 Step Handler；第一版禁止任意 plugin 執行碼。
-- [ ] P8-5. 以 atomic JSON 保存執行狀態；支援完成、失敗、取消與有限重試。
+- [x] P8-5. 以 atomic JSON 保存執行狀態；支援完成、失敗、取消與有限重試。
 - [x] P8-A1. 每一步可追蹤輸入摘要、輸出、時間與安全錯誤；失敗不得標示完成。
 
 ### M2：文件會議包
 
 - [x] P8-6. 串接文件解析／檢索 → 摘要 → 會議重點 → 可選翻譯 → Markdown Artifact。
-- [ ] P8-7. Workspace 顯示目前步驟、來源、coverage 與已完成 Artifact。
+- [x] P8-7. Workspace 顯示目前步驟、來源、coverage 與已完成 Artifact。
 - [ ] P8-A2. 使用者拖入 PDF／DOCX 後三次操作內取得 Markdown；中途失敗仍保留已完成成果。
-- [ ] P8-A3. 以打包 EXE 完成端對端文件會議包驗收。
+- [x] P8-A3. 以打包 EXE 完成端對端文件會議包驗收。
 
-> 2026-07-19：Workflow 狀態、取消、白名單步驟、部分／完整 Artifact 與背景輪詢 UI 已實作；
-> 業務測試涵蓋完整成功、後段 LLM 失敗保留摘要、匯出失敗不得完成、取消零呼叫與格式拒絕。
-> P8-5 尚缺失敗 Run 的明確有限重試入口；P8-7 尚缺在 Workspace 直接展開 coverage／來源；
-> P8-A2／P8-A3 等待人工與打包 EXE 驗收，因此不先勾選。
+> 2026-07-19：失敗／取消 Run 可建立新 Run 重新執行，保留 `retry_of` 且最多 3 次；
+> Workspace 直接顯示 coverage、來源定位與部分／完整 Artifact，不保存來源全文。
+> 新版 77.1 MiB EXE 已通過四格式文件定位、DOCX → 證據 → loopback 假 LLM → Markdown Artifact，
+> 並啟動 8 秒存活。P8-A2 仍等待使用者依 `USER_TEST.md` 實際點選確認，因此不先勾選。
+
+### v7 已知問題修正（2026-07-19）
+
+- [x] P8-R1. **重試唯一性與防重入**：來源 Run 以 `retry_to` 原子宣告唯一後繼；
+      同一失敗 Run 第二次重試會明確拒絕，沿鏈仍最多 3 次。前端建立／重試期間會停用按鈕，
+      防止快速雙擊產生並行 Run。
+- [x] P8-R2. **損毀 Run 回退**：`latest_run()` 依 mtime 逐筆尋找最近有效 JSON，
+      最新一筆損毀時會回退到次新的有效 Run，不再讓 Workspace 永久失效。
+- [x] P8-R3. **Run／Artifact 保留與清理**：自動保留最近 50 筆已結束 Run、所有執行中 Run
+      與最多 5 筆損毀 JSON；同步刪除淘汰／孤立 Artifact。文件頁新增「清理 Workflow 歷史」，
+      可刪除已結束 Run 與 Markdown 成果，執行中工作保留。
+
+> 2026-07-19 獨立測試同時確認正常的項目：不支援副檔名回傳明確中文錯誤、執行中取消會標記
+> `cancelled` 並保留 partial Artifact、translate 步驟產出含翻譯的 Artifact、沿重試鏈的
+> 上限正確生效、`verify_packaged_workflow.py` 打包 E2E 獨立重跑為
+> `QA_RESULT|STATUS:PASS`、`dist\ClaudeCat` 實測 77.1 MiB 與記載相符。
+>
+> 修正後新增回歸：同一來源 Run 第二次重試被拒、最新壞 JSON 回退、50 筆保留上限與手動清理
+> 均通過；全專案測試及修正版 EXE 文件／Workflow／啟動驗證通過。
 
 ### 後續里程碑
 

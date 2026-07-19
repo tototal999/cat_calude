@@ -626,6 +626,11 @@ class WorkflowTests(unittest.TestCase):
             self.assertIn('採購流程.pdf · 第 8 頁', text)
             self.assertIn('抽樣涵蓋 1/2', text)
             self.assertEqual(result['model'], 'company-doc')
+            self.assertEqual(result['coverage'], self.EVIDENCE['coverage'])
+            self.assertEqual(result['sources'], [{
+                'document_name': '採購流程.pdf',
+                'locator': '第 8 頁',
+            }])
 
     def test_later_llm_failure_preserves_completed_summary_as_partial_artifact(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -703,6 +708,78 @@ class WorkflowTests(unittest.TestCase):
             self.assertEqual(result['steps'][0]['status'], 'failed')
             self.assertIn('只支援 PDF 與 DOCX', result['steps'][0]['error'])
             chat.assert_not_called()
+
+    def test_failed_workflow_retry_creates_a_new_bounded_run(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            runs_patch, artifacts_patch = self._directories(root)
+            with runs_patch, artifacts_patch:
+                previous = workflows.create_document_meeting_pack(self.DOCUMENT_ID, translate=True)
+                previous['status'] = 'failed'
+                workflows._write_run(previous)
+                retried = workflows.retry_run(previous['run_id'])
+
+                self.assertNotEqual(retried['run_id'], previous['run_id'])
+                self.assertEqual(retried['retry_of'], previous['run_id'])
+                self.assertEqual(retried['retry_count'], 1)
+                self.assertIn('translate', [step['id'] for step in retried['steps']])
+                duplicate = workflows.retry_run(previous['run_id'])
+                self.assertIn('已經建立過', duplicate['error'])
+
+                retried['status'] = 'failed'
+                retried['retry_count'] = workflows.MAX_RETRIES
+                workflows._write_run(retried)
+                blocked = workflows.retry_run(retried['run_id'])
+                self.assertIn('重新執行上限', blocked['error'])
+
+    def test_completed_workflow_cannot_be_retried(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            runs_patch, artifacts_patch = self._directories(root)
+            with runs_patch, artifacts_patch:
+                previous = workflows.create_document_meeting_pack(self.DOCUMENT_ID)
+                previous['status'] = 'completed'
+                workflows._write_run(previous)
+                result = workflows.retry_run(previous['run_id'])
+            self.assertIn('只有失敗或已取消', result['error'])
+
+    def test_latest_run_skips_newest_corrupt_json(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            runs_patch, artifacts_patch = self._directories(root)
+            with runs_patch, artifacts_patch:
+                valid = workflows.create_document_meeting_pack(self.DOCUMENT_ID)
+                valid['status'] = 'completed'
+                workflows._write_run(valid)
+                corrupt = root / 'runs' / 'ffffffff-ffff-4fff-8fff-ffffffffffff.json'
+                corrupt.write_text('{broken', encoding='utf-8')
+                result = workflows.latest_run()
+            self.assertEqual(result['run_id'], valid['run_id'])
+
+    def test_retention_and_manual_cleanup_bound_local_history(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            runs_patch, artifacts_patch = self._directories(root)
+            with runs_patch, artifacts_patch, patch.object(workflows, 'MAX_COMPLETED_RUNS', 2):
+                for index in range(4):
+                    run = workflows.create_document_meeting_pack(self.DOCUMENT_ID)
+                    run['status'] = 'completed'
+                    workflows._write_run(run)
+                    artifact = root / 'artifacts' / f'{run["run_id"]}_meeting-pack.md'
+                    artifact.parent.mkdir(parents=True, exist_ok=True)
+                    artifact.write_text(f'run {index}', encoding='utf-8')
+                pruned = workflows.prune_history()
+                self.assertGreaterEqual(pruned['removed_runs'], 1)
+                self.assertLessEqual(len(list((root / 'runs').glob('*.json'))), 2)
+                self.assertLessEqual(len(list((root / 'artifacts').glob('*.md'))), 2)
+
+                active = workflows.create_document_meeting_pack(self.DOCUMENT_ID)
+                active_artifact = root / 'artifacts' / f'{active["run_id"]}_meeting-pack.md'
+                active_artifact.write_text('partial', encoding='utf-8')
+                cleared = workflows.clear_history()
+                self.assertEqual(cleared['active_runs_preserved'], 1)
+                self.assertTrue(workflows._run_path(active['run_id']).exists())
+                self.assertTrue(active_artifact.exists())
 
 
 class WorkerTests(unittest.TestCase):

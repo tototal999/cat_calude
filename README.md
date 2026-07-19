@@ -46,7 +46,10 @@ python cat.py
 
 文件助手選取 PDF／DOCX 後可建立「文件會議包」：
 本機檢索來源、透過文件任務模型產生摘要與會議重點、可選英文翻譯，最後輸出 Markdown。
-UI 會顯示每一步狀態與 Artifact 路徑；後續步驟失敗時，已完成摘要仍保留為部分成果。
+UI 會顯示每一步狀態、coverage、來源定位與 Artifact 路徑；後續步驟失敗時，
+已完成摘要仍保留為部分成果，並可按「重新執行」（每條重試鏈最多 3 次）。
+同一失敗 Run 只能建立一筆重試；已結束歷史自動保留最近 50 筆，文件頁也可手動清理
+已結束 Run 與 Markdown 成果，執行中的工作不會被刪除。
 Workflow 只使用公司 LLM 或已啟用的本機 llama.cpp，不會呼叫 Claude／Codex。
 
 ### 1. JSON 工具分頁
@@ -140,7 +143,7 @@ claude-cat/
 pip install pyinstaller pystray
 pyinstaller ClaudeCat.spec --clean -y
 ```
-產出在 `dist\ClaudeCat`。`skins\` 與 `frontend\` 會一併凍入資料夾中。之後新增皮膚不需重新打包，丟到 exe 旁邊的 `skins\` 資料夾即可。2026-07-18 最新參考建置約 **77 MiB**（含三套完整狀態素材）；已以打包 EXE 驗證 PDF、DOCX、PPTX、XLSX 可完成文件索引。
+產出在 `dist\ClaudeCat`。`skins\` 與 `frontend\` 會一併凍入資料夾中。之後新增皮膚不需重新打包，丟到 exe 旁邊的 `skins\` 資料夾即可。2026-07-19 最新建置約 **77.1 MiB**（含三套完整狀態素材）；已以打包 EXE 驗證 PDF、DOCX、PPTX、XLSX 文件索引，以及 DOCX → 來源檢索 → 本機假 LLM → Markdown Artifact 的完整文件會議包。
 
 桌寵會顯示為 Windows 工作列的 `ClaudeCat` 項目；可直接按該項目的關閉按鈕結束程式，位置會照既有流程保存。
 

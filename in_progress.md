@@ -14,8 +14,18 @@
 - 首條「文件會議包」已串接 PDF／DOCX 證據檢索、摘要、會議重點、可選英文翻譯與 Markdown 匯出。
 - 文件頁可背景啟動 Workflow、輪詢每一步狀態、取消執行，並在關閉重開後讀取最後一次 Run。
 - 摘要完成即保存部分 Artifact；後段 LLM 或匯出失敗時不刪除既有成果，且 Run 不會誤標完成。
+- 失敗／取消 Run 可重新執行，建立新的可稽核 Run 並保留來源 Run，單一重試鏈最多 3 次。
+- Workspace 直接顯示抽樣 coverage、來源定位與 Artifact；Run 不保存文件來源全文。
 - Router 沿用文件任務模型；公司 LLM／本機 llama.cpp 邊界不變，Claude／Codex 不參與 Workflow。
-- 自動測試已通過；尚待 Workspace 直接顯示 coverage／來源、失敗 Run 重試入口、人工操作及打包 EXE 驗收。
+- 新版 `dist\ClaudeCat` 為 77.1 MiB；四格式文件定位與打包文件會議包 E2E 均通過，啟動 8 秒存活。
+- 尚待使用者依 `USER_TEST.md` 人工確認三次操作內取得 Markdown、來源／coverage 顯示與重試按鈕。
+- 2026-07-19 獨立測試發現的 P8-R1～R3 已修正：同一來源 Run 只允許一個 `retry_to`，
+  建立／重試按鈕防雙擊；`latest_run()` 會略過壞 JSON 回退到最近有效 Run；歷史自動保留
+  最近 50 筆已結束 Run、執行中 Run 與最多 5 筆損毀 JSON，並同步清除多餘 Artifact。
+  文件頁另提供手動清理入口，且不刪除執行中工作。
+- 2026-07-19 獨立測試確認正常：不支援副檔名回傳明確中文錯誤、執行中取消標記 `cancelled`
+  並保留 partial Artifact、translate 步驟產出含翻譯的 Artifact、沿鏈重試上限生效、
+  `verify_packaged_workflow.py` 重跑為 `QA_RESULT|STATUS:PASS`、`dist\ClaudeCat` 實測 77.1 MiB。
 
 ## v6.2 桌面 AI 工具箱（2026-07-19）
 
@@ -28,7 +38,7 @@
 - 用量徽章同時顯示 Claude／Codex 時改為上下兩行，避免徽章過寬；Codex app-server 的安全錯誤訊息會直接顯示，便於判斷是否需要重新登入。
 - 2026-07-19 第二輪人工驗收：拖曳位置持久化、點擊快速提問、Skin 切換持久化、排程 60 秒自動收合、用量 OFF 零請求、閒置睡眠／驚醒與所有工具頁停靠均通過。Esc 原回報經真正的 Windows `VK_ESCAPE` 驗證為工具注入限制造成的假陽性，保留輸入框 Esc 綁定作防禦性處理。另發現最大化工具頁關閉後桌寵會以縮小時座標還原而出界；已補啟動、拖曳、尺寸還原與徽章的夾邊（`_clamp_pet_position()`），同日人工複驗通過：開排程→最大化→關閉後桌寵落在 (1238,640)-(1366,768)，完整留在 1366x768 畫面內，徽章亦被夾住。
 - 修正第三輪審查：文件檢索改用 CJK 詞組與最低相關門檻；長文件摘要／比較改為跨全文抽樣並明示非完整涵蓋；Word 表格與 Excel 欄標題會隨證據保留。翻譯以佔位符實際鎖定程式碼／SQL／識別碼，模型未完整保留即回報錯誤。
-- 驗證：Python 3.11 `test_logic.py` **59/59** 通過（此為全專案唯一記錄測試數量之處，其他文件一律不重複寫數字）（含 Workflow 成功／部分成果／匯出失敗／取消／格式邊界、本機 OpenAI-compatible 假端點、中文誤命中、抽樣涵蓋、sidecar 路由、JSON 深度、翻譯還原、weekly 非當日、disabled/delete 排程、閒置睡眠與工具頁停靠回歸）；`node --check frontend/chat.js` 與 `git diff --check` 通過。翻譯／Health Check 的實際內網端點連線待使用者環境確認。文件助手已確認採公司內網 endpoint；不再將「完全離線推論」列為驗收阻塞。
+- 驗證：Python 3.11 `test_logic.py` **63/63** 通過（此為全專案唯一記錄測試數量之處，其他文件一律不重複寫數字）（含 Workflow 重試唯一性、壞檔回退、歷史保留／清理、成功／部分成果／匯出失敗／取消／格式邊界、本機 OpenAI-compatible 假端點、中文誤命中、抽樣涵蓋、sidecar 路由、JSON 深度、翻譯還原、weekly 非當日、disabled/delete 排程、閒置睡眠與工具頁停靠回歸）；`node --check frontend/chat.js` 與 `git diff --check` 通過。翻譯／Health Check 的實際內網端點連線待使用者環境確認。文件助手已確認採公司內網 endpoint；不再將「完全離線推論」列為驗收阻塞。
 
 ### v6.2 尚待完成的實機項目
 

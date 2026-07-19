@@ -7,6 +7,7 @@ let _timerId = null;
 let _editingEnabled = true;
 let _currentDocumentId = null;
 let _workflowPollId = null;
+let _workflowStarting = false;
 
 // Fake Prompts Library for "/"
 const PROMPTS = [
@@ -139,7 +140,9 @@ function renderDocumentResult(result) {
 }
 
 function startMeetingPack() {
-  if (!_currentDocumentId) return;
+  if (!_currentDocumentId || _workflowStarting) return;
+  _workflowStarting = true;
+  document.getElementById('meeting-pack-start').disabled = true;
   const translate = document.getElementById('meeting-pack-translate').checked;
   const box = document.getElementById('document-workflow');
   box.textContent = '正在建立 Workflow…';
@@ -150,17 +153,52 @@ function startMeetingPack() {
     _workflowPollId = setInterval(() => {
       pywebview.api.get_workflow_run(run.run_id).then(renderWorkflowRun);
     }, 700);
-  }).catch(error => { box.textContent = 'Workflow 啟動失敗：' + error; });
+  }).catch(error => {
+    box.textContent = 'Workflow 啟動失敗：' + error;
+    _workflowStarting = false;
+    document.getElementById('meeting-pack-start').disabled = false;
+  });
 }
 
 function cancelWorkflow(runId) {
   pywebview.api.cancel_workflow_run(runId).then(renderWorkflowRun);
 }
 
+function retryWorkflow(runId) {
+  if (_workflowStarting) return;
+  _workflowStarting = true;
+  pywebview.api.retry_workflow_run(runId).then(run => {
+    renderWorkflowRun(run);
+    if (run.error) {
+      _workflowStarting = false;
+      return;
+    }
+    if (_workflowPollId) clearInterval(_workflowPollId);
+    _workflowPollId = setInterval(() => {
+      pywebview.api.get_workflow_run(run.run_id).then(renderWorkflowRun);
+    }, 700);
+  }).catch(error => {
+    document.getElementById('document-workflow').textContent = '重新執行失敗：' + error;
+    _workflowStarting = false;
+  });
+}
+
+function clearWorkflowHistory() {
+  if (!window.confirm('清除已結束的 Workflow 與 Markdown 成果？執行中的工作會保留。')) return;
+  pywebview.api.clear_workflow_history().then(result => {
+    const box = document.getElementById('document-workflow');
+    if (result.error) { box.textContent = result.error; return; }
+    box.textContent = `已清除 ${result.removed_runs} 筆 Run、${result.removed_artifacts} 個成果；保留 ${result.active_runs_preserved} 筆執行中工作。`;
+  });
+}
+
 function renderWorkflowRun(run) {
   const box = document.getElementById('document-workflow');
   if (!run || run.error) {
     if (run && run.error !== '尚無 Workflow 執行紀錄。') box.textContent = run.error;
+    _workflowStarting = false;
+    const start = document.getElementById('meeting-pack-start');
+    if (start) start.disabled = false;
     return;
   }
   box.innerHTML = '';
@@ -175,6 +213,27 @@ function renderWorkflowRun(run) {
     steps.appendChild(row);
   });
   box.appendChild(steps);
+  const coverage = run.coverage;
+  if (coverage && coverage.total_chunks) {
+    const note = document.createElement('div');
+    note.className = 'document-coverage-note';
+    note.textContent = coverage.complete
+      ? `來源涵蓋：${coverage.total_chunks}/${coverage.total_chunks} 個文件區塊（完整）`
+      : `來源涵蓋：${coverage.included_chunks}/${coverage.total_chunks} 個文件區塊（抽樣，非完整結論）`;
+    box.appendChild(note);
+  }
+  if ((run.sources || []).length) {
+    const sourceTitle = document.createElement('div');
+    sourceTitle.className = 'workflow-source-title';
+    sourceTitle.textContent = '來源';
+    box.appendChild(sourceTitle);
+    (run.sources || []).forEach(source => {
+      const row = document.createElement('div');
+      row.className = 'workflow-source';
+      row.textContent = `📄 ${source.document_name} · ${source.locator || '來源定位不可用'}`;
+      box.appendChild(row);
+    });
+  }
   (run.artifacts || []).forEach(artifact => {
     const path = document.createElement('div');
     path.className = 'workflow-artifact';
@@ -182,12 +241,30 @@ function renderWorkflowRun(run) {
     box.appendChild(path);
   });
   if (run.status === 'pending' || run.status === 'running') {
+    const start = document.getElementById('meeting-pack-start');
+    if (start) start.disabled = true;
     const cancel = document.createElement('button');
     cancel.className = 'secondary';
     cancel.textContent = '取消';
     cancel.onclick = () => cancelWorkflow(run.run_id);
     box.appendChild(cancel);
+  } else if (run.status === 'failed' || run.status === 'cancelled') {
+    _workflowStarting = false;
+    const start = document.getElementById('meeting-pack-start');
+    if (start) start.disabled = false;
+    if (_workflowPollId) {
+      clearInterval(_workflowPollId);
+      _workflowPollId = null;
+    }
+    const retry = document.createElement('button');
+    retry.className = 'secondary';
+    retry.textContent = '重新執行';
+    retry.onclick = () => retryWorkflow(run.run_id);
+    box.appendChild(retry);
   } else if (_workflowPollId) {
+    _workflowStarting = false;
+    const start = document.getElementById('meeting-pack-start');
+    if (start) start.disabled = false;
     clearInterval(_workflowPollId);
     _workflowPollId = null;
   }

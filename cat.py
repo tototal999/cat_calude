@@ -1245,6 +1245,32 @@ if __name__ == '__main__':
             if not sources or sources[0]['source'].get('locator') != sys.argv[4]:
                 sys.exit(1)
             sys.exit(0)
+        elif sys.argv[1] == '--workflow-check':
+            if len(sys.argv) < 4:
+                sys.exit(2)
+            from backend.services import document_service, workflow_service
+            llm.init(CONFIG_FILE)
+            llm.use_local_endpoint(sys.argv[3], 'workflow-test-model')
+            ingested = document_service.ingest(sys.argv[2])
+            if ingested.get('error'):
+                sys.exit(1)
+            run = workflow_service.create_document_meeting_pack(
+                ingested['document']['id'])
+            if run.get('error'):
+                sys.exit(1)
+            result = workflow_service.execute(run['run_id'])
+            artifacts = result.get('artifacts', [])
+            if result.get('status') != 'completed' or not artifacts:
+                sys.exit(1)
+            artifact = Path(artifacts[0]['path'])
+            if not artifact.is_file():
+                sys.exit(1)
+            text = artifact.read_text(encoding='utf-8')
+            if 'PACKAGED_SUMMARY' not in text or 'PACKAGED_MEETING_NOTES' not in text:
+                sys.exit(1)
+            if not result.get('sources') or not result.get('coverage'):
+                sys.exit(1)
+            sys.exit(0)
         elif sys.argv[1] == '--ppt':
             import worker
             target = sys.argv[2]

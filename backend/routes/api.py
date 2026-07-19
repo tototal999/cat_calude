@@ -248,6 +248,21 @@ class JsApi:
     def cancel_workflow_run(self, run_id):
         return workflows.cancel_run(run_id)
 
+    def retry_workflow_run(self, run_id):
+        run = workflows.retry_run(run_id)
+        if run.get('error'):
+            return run
+        threading.Thread(
+            target=workflows.execute,
+            args=(run['run_id'],),
+            name=f'workflow-{run["run_id"][:8]}',
+            daemon=True,
+        ).start()
+        return run
+
+    def clear_workflow_history(self):
+        return workflows.clear_history()
+
 
     def list_sessions(self):
         sessions_dir = settings.LOG_DIR / 'sessions'

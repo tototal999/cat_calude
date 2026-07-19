@@ -22,6 +22,9 @@ DOCUMENT_MEETING_PACK = {
     'steps': ['retrieve_evidence', 'summarize', 'meeting_notes', 'translate', 'export_markdown'],
 }
 _LOCK = threading.RLock()
+MAX_RETRIES = 3
+MAX_COMPLETED_RUNS = 50
+MAX_CORRUPT_RUNS = 5
 
 
 def _now() -> str:
@@ -53,7 +56,111 @@ def latest_run() -> dict[str, Any]:
         paths = sorted(RUNS_DIR.glob('*.json'), key=lambda path: path.stat().st_mtime, reverse=True)
     except OSError:
         return {'error': '無法讀取 Workflow 執行紀錄。'}
-    return get_run(paths[0].stem) if paths else {'error': '尚無 Workflow 執行紀錄。'}
+    for path in paths:
+        run = get_run(path.stem)
+        if not run.get('error'):
+            return run
+    return {'error': '尚無有效的 Workflow 執行紀錄。' if paths else '尚無 Workflow 執行紀錄。'}
+
+
+def _remove_run_files(path: Path) -> int:
+    removed = 0
+    try:
+        run_id = str(uuid.UUID(path.stem))
+    except ValueError:
+        run_id = ''
+    try:
+        path.unlink(missing_ok=True)
+        removed += 1
+    except OSError:
+        pass
+    if run_id:
+        for artifact in ARTIFACTS_DIR.glob(f'{run_id}_*.md'):
+            try:
+                artifact.unlink(missing_ok=True)
+                removed += 1
+            except OSError:
+                pass
+    return removed
+
+
+def _prune_history_unlocked() -> dict[str, int]:
+    RUNS_DIR.mkdir(parents=True, exist_ok=True)
+    ARTIFACTS_DIR.mkdir(parents=True, exist_ok=True)
+    valid_finished: list[tuple[float, Path, dict[str, Any]]] = []
+    corrupt: list[tuple[float, Path]] = []
+    kept_ids: set[str] = set()
+    for path in RUNS_DIR.glob('*.json'):
+        try:
+            mtime = path.stat().st_mtime
+            run = json.loads(path.read_text(encoding='utf-8'))
+            run_id = str(uuid.UUID(run['run_id']))
+        except (OSError, ValueError, KeyError, json.JSONDecodeError):
+            try:
+                corrupt.append((path.stat().st_mtime, path))
+            except OSError:
+                pass
+            continue
+        if run.get('status') in {'pending', 'running'}:
+            kept_ids.add(run_id)
+        else:
+            valid_finished.append((mtime, path, run))
+    valid_finished.sort(key=lambda item: item[0], reverse=True)
+    removed_runs = removed_artifacts = 0
+    for index, (_mtime, path, run) in enumerate(valid_finished):
+        if index < MAX_COMPLETED_RUNS:
+            kept_ids.add(run['run_id'])
+            continue
+        before = len(list(ARTIFACTS_DIR.glob(f'{run["run_id"]}_*.md')))
+        removed = _remove_run_files(path)
+        removed_runs += int(removed > 0)
+        removed_artifacts += before
+    corrupt.sort(key=lambda item: item[0], reverse=True)
+    for _mtime, path in corrupt[MAX_CORRUPT_RUNS:]:
+        removed_runs += int(_remove_run_files(path) > 0)
+    for artifact in ARTIFACTS_DIR.glob('*_meeting-pack.md'):
+        run_id = artifact.name[:36]
+        if run_id in kept_ids:
+            continue
+        try:
+            artifact.unlink()
+            removed_artifacts += 1
+        except OSError:
+            pass
+    return {'removed_runs': removed_runs, 'removed_artifacts': removed_artifacts}
+
+
+def prune_history() -> dict[str, int]:
+    with _LOCK:
+        return _prune_history_unlocked()
+
+
+def clear_history() -> dict[str, Any]:
+    with _LOCK:
+        active_ids: set[str] = set()
+        removed_runs = removed_artifacts = 0
+        for path in RUNS_DIR.glob('*.json'):
+            run = get_run(path.stem)
+            if not run.get('error') and run.get('status') in {'pending', 'running'}:
+                active_ids.add(run['run_id'])
+                continue
+            before = len(list(ARTIFACTS_DIR.glob(f'{path.stem}_*.md')))
+            removed_runs += int(_remove_run_files(path) > 0)
+            removed_artifacts += before
+        for artifact in ARTIFACTS_DIR.glob('*_meeting-pack.md'):
+            if artifact.name[:36] in active_ids:
+                continue
+            try:
+                artifact.unlink()
+                removed_artifacts += 1
+            except OSError:
+                pass
+        return {
+            'status': 'ok',
+            'removed_runs': removed_runs,
+            'removed_artifacts': removed_artifacts,
+            'active_runs_preserved': len(active_ids),
+        }
 
 
 def create_document_meeting_pack(document_id: str, translate: bool = False) -> dict[str, Any]:
@@ -73,6 +180,7 @@ def create_document_meeting_pack(document_id: str, translate: bool = False) -> d
         'status': 'pending',
         'current_step': None,
         'cancel_requested': False,
+        'retry_count': 0,
         'created_at': _now(),
         'updated_at': _now(),
         'input': {'document_id': document_id},
@@ -81,6 +189,7 @@ def create_document_meeting_pack(document_id: str, translate: bool = False) -> d
     }
     with _LOCK:
         _write_run(run)
+        _prune_history_unlocked()
     return run
 
 
@@ -95,6 +204,35 @@ def cancel_run(run_id: str) -> dict[str, Any]:
         run['updated_at'] = _now()
         _write_run(run)
         return run
+
+
+def retry_run(run_id: str) -> dict[str, Any]:
+    with _LOCK:
+        previous = get_run(run_id)
+        if previous.get('error'):
+            return previous
+        if previous.get('status') not in {'failed', 'cancelled'}:
+            return {'error': '只有失敗或已取消的 Workflow 可以重新執行。'}
+        if previous.get('retry_to'):
+            return {'error': '此 Workflow 已經建立過重新執行的 Run。'}
+        retry_count = int(previous.get('retry_count', 0))
+        if retry_count >= MAX_RETRIES:
+            return {'error': f'此 Workflow 已達重新執行上限（{MAX_RETRIES} 次）。'}
+        translate = any(step.get('id') == 'translate' for step in previous.get('steps', []))
+        run = create_document_meeting_pack(
+            previous.get('input', {}).get('document_id', ''),
+            translate,
+        )
+        if run.get('error'):
+            return run
+        run['retry_of'] = previous['run_id']
+        run['retry_count'] = retry_count + 1
+        previous['retry_to'] = run['run_id']
+        previous['updated_at'] = _now()
+        _write_run(run)
+        _write_run(previous)
+        _prune_history_unlocked()
+    return run
 
 
 def _source_text(sources: list[dict[str, Any]]) -> str:
@@ -173,6 +311,14 @@ def _retrieve_evidence(run: dict[str, Any], data: dict[str, Any]) -> str:
     if suffix not in DOCUMENT_MEETING_PACK['input_types']:
         raise RuntimeError('文件會議包目前只支援 PDF 與 DOCX。')
     run['input']['document_name'] = data['document_name']
+    run['coverage'] = data['coverage']
+    run['sources'] = [
+        {
+            'document_name': item['source']['document_name'],
+            'locator': item['source'].get('locator', '來源定位不可用'),
+        }
+        for item in data['sources']
+    ]
     return f'{len(data["sources"])} 個來源區塊'
 
 
@@ -246,6 +392,7 @@ def execute(run_id: str) -> dict[str, Any]:
                 run['current_step'] = None
                 run['updated_at'] = _now()
                 _write_run(run)
+                _prune_history_unlocked()
                 return run
             run = latest
             step = next(item for item in run['steps'] if item['id'] == step['id'])
@@ -261,6 +408,8 @@ def execute(run_id: str) -> dict[str, Any]:
             handler_model = run.get('model')
             handler_artifacts = run.get('artifacts', [])
             handler_input = run.get('input', {})
+            handler_coverage = run.get('coverage')
+            handler_sources = run.get('sources', [])
         except Exception as exc:
             with _LOCK:
                 run = get_run(run_id)
@@ -275,6 +424,7 @@ def execute(run_id: str) -> dict[str, Any]:
                         'type': 'markdown', 'path': str(partial), 'status': 'partial',
                     }]
                 _write_run(run)
+                _prune_history_unlocked()
                 return run
         with _LOCK:
             run = get_run(run_id)
@@ -284,6 +434,10 @@ def execute(run_id: str) -> dict[str, Any]:
                 run['artifacts'] = handler_artifacts
             if handler_input:
                 run['input'] = handler_input
+            if handler_coverage:
+                run['coverage'] = handler_coverage
+            if handler_sources:
+                run['sources'] = handler_sources
             if run.get('cancel_requested'):
                 step = next(item for item in run['steps'] if item['id'] == step['id'])
                 step.update({'status': 'cancelled', 'completed_at': _now()})
@@ -291,6 +445,7 @@ def execute(run_id: str) -> dict[str, Any]:
                 run['current_step'] = None
                 run['updated_at'] = _now()
                 _write_run(run)
+                _prune_history_unlocked()
                 return run
             step = next(item for item in run['steps'] if item['id'] == step['id'])
             step.update({
@@ -308,4 +463,5 @@ def execute(run_id: str) -> dict[str, Any]:
         run['completed_at'] = _now()
         run['updated_at'] = _now()
         _write_run(run)
+        _prune_history_unlocked()
         return run
