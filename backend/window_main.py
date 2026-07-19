@@ -126,7 +126,10 @@ def request_open(tab: str = 'schedule') -> None:
     Safe to call from the tk thread."""
     global _pending_tab
     _pending_tab = tab
-    if tab == 'chat' and _on_chat_open:
+    # The singleton window can open any tool tab.  Dock the always-on-top
+    # desktop pet for all of them, not just the Chat tab, so it cannot cover
+    # controls in Schedule, JSON, translation, documents, or settings.
+    if _on_chat_open:
         _on_chat_open()
     if _window is not None:
         try:

@@ -120,10 +120,10 @@ logger = _setup_logging()
 
 # usage % (upper bound, inclusive) -> frame interval in ms; None = frozen
 SPEED_TABLE = [
-    (25, 400),    # stroll
-    (50, 250),    # trot
-    (75, 150),    # run
-    (95, 80),     # sprint
+    (25, 700),    # stroll
+    (50, 550),    # trot
+    (75, 400),    # run
+    (95, 280),    # sprint
     (100, None),  # exhausted: cat freezes
 ]
 # ---------------------------------------------------------------------------
@@ -222,17 +222,19 @@ class ClaudeCat:
             self._queue_card(f'排程檔有 {len(self.scheduler.errors)} 筆錯誤,'
                              f'詳見右鍵選單「排程」')
 
-        # Last saved position, clamped on-screen; else bottom-right corner
+        # Last saved position, clamped fully on-screen; else bottom-right corner.
+        # A prior assistant-window docking position may have been calculated
+        # while the pet was 32px wide, so it must be re-clamped for the
+        # configured size before the window is first shown.
         sw, sh = self.root.winfo_screenwidth(), self.root.winfo_screenheight()
-        x = cfg.get('x', sw - self.w - 40)
-        y = cfg.get('y', sh - self.h - 140)
-        if not (isinstance(x, int) and isinstance(y, int)
-                and -self.w < x < sw and -self.h < y < sh):
-            x, y = sw - self.w - 40, sh - self.h - 140
+        requested_x = cfg.get('x', sw - self.w - 40)
+        requested_y = cfg.get('y', sh - self.h - 140)
+        x, y = self._clamp_pet_position(requested_x, requested_y)
         self.root.geometry(f'{self.w}x{self.h}+{x}+{y}')
         self.root.update()  # window must be mapped before we grab its hwnd
-        logger.info('screen=%dx%d requested=(%d,%d) actual=(%d,%d)',
-                    sw, sh, x, y, self.root.winfo_x(), self.root.winfo_y())
+        logger.info('screen=%dx%d requested=(%r,%r) actual=(%d,%d)',
+                    sw, sh, requested_x, requested_y,
+                    self.root.winfo_x(), self.root.winfo_y())
         self.canvas = winalpha.LayeredCanvas(self.root.winfo_id(), self.w, self.h)
         self.canvas.draw(self.idle_buffer)
         # Keep the transparent, borderless pet while exposing a normal
@@ -289,7 +291,8 @@ class ClaudeCat:
         self._last_interact = time.time()
 
     def _drag_move(self, e: tk.Event) -> None:
-        self.root.geometry(f'+{e.x_root - self._dx}+{e.y_root - self._dy}')
+        x, y = self._clamp_pet_position(e.x_root - self._dx, e.y_root - self._dy)
+        self.root.geometry(f'+{x}+{y}')
         self._place_badge()
         self._last_interact = time.time()
 
@@ -373,8 +376,16 @@ class ClaudeCat:
             threading.Thread(target=work, daemon=True).start()
             return 'break'
 
+        def close_quick(_event=None):
+            if win.winfo_exists():
+                win.destroy()
+            return 'break'
+
         entry.bind('<Return>', ask)
-        win.bind('<Escape>', lambda _event: win.destroy())
+        # The input widget owns keyboard focus, so bind Escape there as well
+        # as on the Toplevel; the latter alone is not reliable on all Tk builds.
+        entry.bind('<Escape>', close_quick)
+        win.bind('<Escape>', close_quick)
         win.bind('<Destroy>', lambda _event: (setattr(self, '_quick_window', None),
                                                setattr(self, '_quick_entry', None)))
         win.bind('<Destroy>', lambda _event: self._set_pet_state(PetState.IDLE), add='+')
@@ -440,10 +451,26 @@ class ClaudeCat:
 
     def _place_badge(self) -> None:
         self.badge_win.update_idletasks()
-        bw = self.badge_win.winfo_reqwidth()
+        bw, bh = self.badge_win.winfo_reqwidth(), self.badge_win.winfo_reqheight()
+        sw, sh = self.root.winfo_screenwidth(), self.root.winfo_screenheight()
         x = self.root.winfo_x() + (self.w - bw) // 2
         y = self.root.winfo_y() + self.h + 2
+        x = min(max(0, x), max(0, sw - bw))
+        y = min(max(0, y), max(0, sh - bh))
         self.badge_win.geometry(f'+{x}+{y}')
+
+    def _clamp_pet_position(self, x: object, y: object) -> tuple[int, int]:
+        """Keep the complete pet window within the visible screen bounds."""
+        sw, sh = self.root.winfo_screenwidth(), self.root.winfo_screenheight()
+        default_x, default_y = sw - self.w - 40, sh - self.h - 140
+        if not isinstance(x, int):
+            x = default_x
+        if not isinstance(y, int):
+            y = default_y
+        return (
+            min(max(0, x), max(0, sw - self.w)),
+            min(max(0, y), max(0, sh - self.h)),
+        )
 
     def _save_config(self) -> None:
         """Merge cat-owned keys without overwriting the LLM owner's settings."""
@@ -519,6 +546,8 @@ class ClaudeCat:
             self.root.geometry(f'{size}x{size}')
             self.root.update_idletasks()
             self.canvas = winalpha.LayeredCanvas(self.root.winfo_id(), size, size)
+            x, y = self._clamp_pet_position(self.root.winfo_x(), self.root.winfo_y())
+            self.root.geometry(f'+{x}+{y}')
         self.canvas.draw(self.idle_buffer)  # next animate tick takes over
         self._place_badge()
         self._save_config()
@@ -671,8 +700,12 @@ class ClaudeCat:
             self._quick_window.withdraw()
 
     def _on_chat_open(self) -> None:
-        """Shrink cat to 32px and dock beside the chat window (spec 2.1,
-        user-requested: must stay attached to the window, not drift apart)."""
+        """Shrink cat to 32px and dock beside the assistant window.
+
+        The singleton pywebview window hosts chat and every tool tab, so it
+        must not be obscured by the full-size always-on-top pet on non-chat
+        tabs such as Schedule or JSON.
+        """
         if self._chat_open:
             return
         self._chat_open = True
@@ -683,7 +716,7 @@ class ClaudeCat:
         logger.info('chat opened, cat shrunk to 32px and docking')
 
     def _on_chat_close(self) -> None:
-        """Restore cat to original size when chat window closes."""
+        """Restore cat to original size when the assistant window closes."""
         if not self._chat_open:
             return
         self._chat_open = False
@@ -981,7 +1014,7 @@ class ClaudeCat:
     def _should_sleep(self) -> bool:
         """Sleep pose wins over the run cycle when the session quota is fully used up (100%),
         or when idle for too long (P1.5-4)."""
-        if not self.sleep_frames or not self._monitor_active():
+        if not self.sleep_frames:
             return False
         usage = self._effective_usage()
         if usage is not None and usage >= 100:
@@ -1004,13 +1037,13 @@ class ClaudeCat:
     def _frame_interval(self) -> int | None:
         """Map current usage % to a frame interval (ms), or None if frozen."""
         if time.time() < self._boost_until:
-            return 80   # schedule alert: brief sprint to catch the eye
+            return 180  # schedule alert: brief, noticeable acceleration
         if not self._monitor_active():
-            return 400  # monitor OFF: fixed leisure pace (spec P1-6)
+            return 700  # monitor OFF: relaxed leisure pace (spec P1-6)
         error = self._effective_error()
         usage = self._effective_usage()
         if error or usage is None:
-            return 300  # API unavailable: gentle default animation
+            return 600  # API unavailable: gentle default animation
         for upper, interval in SPEED_TABLE:
             if usage <= upper:
                 return interval
@@ -1022,11 +1055,11 @@ class ClaudeCat:
         state = self.pet_state.current
         if state in (PetState.THINKING, PetState.STREAMING):
             self._draw_state_frame('thinking' if state == PetState.THINKING else 'streaming')
-            self.root.after(120, self._animate)
+            self.root.after(180, self._animate)
             return
         if state in (PetState.LISTENING, PetState.SUCCESS):
             self._draw_state_frame('listening' if state == PetState.LISTENING else 'success')
-            self.root.after(250, self._animate)
+            self.root.after(350, self._animate)
             return
         if self._should_sleep():
             # Static, not animated: one sleep frame (the first, by filename

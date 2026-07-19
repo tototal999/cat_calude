@@ -1,6 +1,8 @@
 import json
 import io
 import gc
+import importlib
+import logging
 import tempfile
 import threading
 import unittest
@@ -111,6 +113,29 @@ class PetStateTests(unittest.TestCase):
         self.assertFalse(state.transition(PetState.STREAMING))
         self.assertEqual(state.current, PetState.IDLE)
 
+    def test_idle_sleep_does_not_depend_on_optional_usage_monitor(self):
+        # cat.py creates its runtime log handler at import time.  Keep this
+        # deterministic logic test independent of a running desktop app's log.
+        with patch('logging.handlers.RotatingFileHandler', return_value=logging.NullHandler()):
+            cat_module = importlib.import_module('cat')
+        pet = object.__new__(cat_module.ClaudeCat)
+        pet.sleep_frames = [object()]
+        pet._sleep_min = 1
+        pet._last_interact = 0
+        pet._effective_usage = lambda: None
+        self.assertTrue(pet._should_sleep())
+
+    def test_restoring_full_size_clamps_a_docked_pet_on_screen(self):
+        with patch('logging.handlers.RotatingFileHandler', return_value=logging.NullHandler()):
+            cat_module = importlib.import_module('cat')
+        pet = object.__new__(cat_module.ClaudeCat)
+        pet.root = type('Root', (), {
+            'winfo_screenwidth': lambda _self: 1366,
+            'winfo_screenheight': lambda _self: 768,
+        })()
+        pet.w = pet.h = 128
+        self.assertEqual(pet._clamp_pet_position(1334, 689), (1238, 640))
+
 
 class PluginTests(unittest.TestCase):
     def test_builtin_plugins_are_fixed_allowlisted_actions(self):
@@ -174,6 +199,16 @@ class ApiTests(unittest.TestCase):
         self.assertTrue(result['discarded'])
         _generation, history = wm.history_snapshot()
         self.assertEqual(history, [])
+
+    def test_every_assistant_tab_docks_the_pet_window(self):
+        wm._open_evt.clear()
+        try:
+            with patch.object(wm, '_window', None), \
+                 patch.object(wm, '_on_chat_open') as on_open:
+                wm.request_open('schedule')
+            on_open.assert_called_once()
+        finally:
+            wm._open_evt.clear()
 
 
 class LlmTests(unittest.TestCase):
