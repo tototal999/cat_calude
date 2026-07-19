@@ -83,7 +83,7 @@
 
 ## 實作狀態（2026-07-19）
 
-- 程式與自動驗證完成：Python 3.11 `test_logic.py` 37/37、`node --check frontend/chat.js` 與 `git diff --check` 通過。
+- 程式與自動驗證完成：Python 3.11 `test_logic.py` 全數通過、`node --check frontend/chat.js` 與 `git diff --check` 通過（測試數量見 [in_progress.md](in_progress.md)）。
 - 待內網實測：使用者設定公司端點後，執行 Health Check 與翻譯請求，確認實際回應與失敗訊息。
 - 發布驗證完成：已於 2026-07-19 重新打包新版 EXE，啟動 5 秒仍存活；打包後文件驗證器亦通過 PDF／DOCX／PPTX／XLSX 索引與來源定位測試。
 

@@ -67,7 +67,7 @@ Claude／Codex limits 與聊天／文件助手完全獨立，預設 OFF。兩者
 - [x] P7-6. 統一桌寵右鍵入口：快速提問、LLM 介面、文件助手、JSON 工具、翻譯、模型設定與排程皆可直接開啟；Skin 與桌寵設定保留子選單，移除重複的 Plugins 選單。（2026-07-19）
 - [x] P7-A1. JSON 工具在 LLM 離線時完全可用；非法 JSON 顯示正確行、欄，並限制輸入大小／深度／節點數。（2026-07-19：確定性單元測試）
 - [o] P7-A2. 翻譯與健康檢查錯誤直接顯示；程式碼／SQL／JSON Key／API path／檔名／錯誤碼以佔位符實際鎖定並驗證還原；待使用者內網端點實機確認。（2026-07-19）
-- [x] P7-A3. 路由、設定 merge、sidecar 模型覆寫、本機 OpenAI-compatible 假端點與 worker／排程反例均有回歸測試。（2026-07-19：Python 3.11 `test_logic.py` 51/51、`node --check frontend/chat.js`、`git diff --check`）
+- [x] P7-A3. 路由、設定 merge、sidecar 模型覆寫、本機 OpenAI-compatible 假端點與 worker／排程反例均有回歸測試。（2026-07-19：Python 3.11 `test_logic.py` 全數通過、`node --check frontend/chat.js`、`git diff --check`；測試數量見 [in_progress.md](in_progress.md)）
 - [x] P7-A4. 已於第三輪修正後重新打包 `ClaudeCat.exe` 並執行啟動煙霧測試；啟動 5 秒仍存活，且 `verify_packaged_documents.py` 驗證 PDF／DOCX／PPTX／XLSX 索引與來源定位通過。（2026-07-19）
 
 ### 已知後續風險（不得宣稱已完成）
@@ -77,6 +77,40 @@ Claude／Codex limits 與聊天／文件助手完全獨立，預設 OFF。兩者
 - [x] P7-R1. 一般聊天的 XLSX worker 已讀取全部工作表，並在任一工作表超過 10,000 列時明確輸出截斷警告。（2026-07-19：回歸測試）
 - [x] P7-R3. PPTX worker 同時支援 `# 標題` 與 `## Slide 標題` 分頁；沒有合法分頁時明確失敗，不再靜默產生單頁。（2026-07-19：回歸測試）
 - [ ] P7-R2. Health Check 目前只驗證聊天模型；仍待逐一驗證已設定的翻譯／文件等任務路由。
+
+---
+
+## v7 — 企業 AI 工作台（規劃中，尚未實作）
+
+> 第一性原理分析與完整邊界見 [enterprise-ai-workbench-first-principles.md](enterprise-ai-workbench-first-principles.md)。
+> 不以 Dashboard 或模型數量作為完成標準；先證明一條 Workflow 能安全產生可交付成果。
+
+### M0：產品邊界
+
+- [ ] P8-0. 凍結「企業 AI 工作台」定位；AI OS 僅作長期願景。
+- [ ] P8-1. 維持公司 LLM／本機 llama.cpp 路由；Claude／Codex 不參與 Workflow，除非未來另行核准資料政策。
+- [ ] P8-2. 首條垂直 Workflow 確認為「文件會議包」。
+
+### M1：Workflow 核心
+
+- [ ] P8-3. 定義 Workflow Definition、Run、StepResult 與 Artifact。
+- [ ] P8-4. 實作白名單 Step Handler；第一版禁止任意 plugin 執行碼。
+- [ ] P8-5. 以 atomic JSON 保存執行狀態；支援完成、失敗、取消與有限重試。
+- [ ] P8-A1. 每一步可追蹤輸入摘要、輸出、時間與安全錯誤；失敗不得標示完成。
+
+### M2：文件會議包
+
+- [ ] P8-6. 串接文件解析／檢索 → 摘要 → 會議重點 → 可選翻譯 → Markdown Artifact。
+- [ ] P8-7. Workspace 顯示目前步驟、來源、coverage 與已完成 Artifact。
+- [ ] P8-A2. 使用者拖入 PDF／DOCX 後三次操作內取得 Markdown；中途失敗仍保留已完成成果。
+- [ ] P8-A3. 以打包 EXE 完成端對端文件會議包驗收。
+
+### 後續里程碑
+
+- [ ] P8-8. 統一 Workspace：拖放／貼上、確定性格式辨識、Workflow 建議與最近 Run。
+- [ ] P8-9. 第二批 Workflow：Log Triage 與只讀 SQL Review。
+- [ ] P8-10. Plugin Catalog：內建 Manifest、版本、輸入類型與權限。
+- [ ] P8-11. 工作導向 Dashboard：Provider、目前步驟、最近成功／失敗與 Artifact。
 
 ---
 
@@ -111,7 +145,7 @@ Claude／Codex limits 與聊天／文件助手完全獨立，預設 OFF。兩者
 - [o] daily：2 分鐘後＋lead_min=1 → 提前卡與正點卡各彈一次
       *(2026-07-17 實機驗證：08:51 lead、08:52 ontime 各觸發一次，log 確認)*
 - [x] lead_min=0 只彈正點；weekly 非當日不觸發；hourly 每小時該分鐘觸發
-      *(`test_logic.py` 的 `SchedulerTests` 已覆蓋 daily、weekly（含非當日）、hourly、跨午夜 lead 與壞 JSON；全套 50 項測試通過，2026-07-19)*
+      *(`test_logic.py` 的 `SchedulerTests` 已覆蓋 daily、weekly（含非當日）、hourly、跨午夜 lead 與壞 JSON；全套測試通過，2026-07-19)*
 - [x] enabled=false／刪除後不觸發 *(test_logic.py 實際建立 disabled 項目並呼叫 `delete()` 驗證)*
 - [x] schedule.json 改壞格式 → 明確指出錯誤筆，其餘正常 *(test_logic.py 驗證)*
 - [x] 彈卡 60s 自動收合；點擊即關；表單即改即存、重啟生效
@@ -142,11 +176,13 @@ Claude／Codex limits 與聊天／文件助手完全獨立，預設 OFF。兩者
       達 config sleep_min 後入睡；2026-07-19 修正：閒置睡眠不再依賴可選的用量監控，
       人工複驗監控 OFF 閒置 95 秒入睡、滑鼠移入立即驚醒。
       （原本聊天中會被誤判閒置偷偷入睡，關窗時瞬間喚醒+當下高用量速度＝看似暴衝）
-- [o] P1.5-6（新增，2026-07-17）：助手視窗貼齊跟隨——`_dock_tick()` 每 400ms
+- [x] P1.5-6（新增，2026-07-17）：助手視窗貼齊跟隨——`_dock_tick()` 每 400ms
       讀 pywebview 視窗座標，貓與徽章貼齊視窗外側，拖動視窗即時跟隨；
       螢幕空間不足時自動切換左/右側停靠；2026-07-19 修正所有工具分頁皆要求停靠，
       人工複驗非 Chat 分頁不再遮擋內容；同日發現關閉最大化視窗會讓還原尺寸的貓出界，
-      已補啟動／拖曳／尺寸還原的完整夾邊，待最終人工複驗。
+      已補啟動／拖曳／尺寸還原的完整夾邊（`_clamp_pet_position()`）。
+      2026-07-19 人工複驗：開排程→最大化→關閉後，貓落在 (1238,640)-(1366,768)
+      完整在 1366x768 畫面內，徽章亦被夾住，不再出界。
 
 ### Part 1.5 驗收（P1.5-5）— 🟡 已部分人工測試
 
@@ -158,7 +194,7 @@ Claude／Codex limits 與聊天／文件助手完全獨立，預設 OFF。兩者
       *(2026-07-19 人工驗收：ragdollcat 切 bluecat 立即生效，重啟仍為 bluecat)*
 - [x] 想睡→熟睡兩階段可觀察；滑鼠移入驚醒；用量跳動喚醒
       *(2026-07-19 人工複驗：監控 OFF 閒置 95 秒入睡，滑鼠移入立即驚醒)*
-- [o] 助手視窗貼齊跟隨 *(2026-07-17 已驗證 Chat；2026-07-19 已驗證排程／JSON／翻譯／文件／設定頁停靠且不遮擋內容；最大化後關閉的夾邊修正待複驗)*
+- [x] 助手視窗貼齊跟隨 *(2026-07-17 已驗證 Chat；2026-07-19 已驗證排程／JSON／翻譯／文件／設定頁停靠且不遮擋內容；同日複驗最大化後關閉的夾邊，貓與徽章均完整留在畫面內)*
 - [x] P1.5-7（新增，2026-07-19）：快速提問泡泡可由真正的 Windows Esc 鍵關閉；首次工具測試的失敗是 VK_PACKET 注入限制造成的假陽性，保留輸入框 Esc 綁定作防禦性處理。
 - [ ] 排程彈卡與監控在互動期間照常（回歸 P1-8 重點項）
 
