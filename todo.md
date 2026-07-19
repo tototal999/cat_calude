@@ -128,6 +128,28 @@ Claude／Codex limits 與聊天／文件助手完全獨立，預設 OFF。兩者
 >
 > 修正後新增回歸：同一來源 Run 第二次重試被拒、最新壞 JSON 回退、50 筆保留上限與手動清理
 > 均通過；全專案測試及修正版 EXE 文件／Workflow／啟動驗證通過。
+>
+> 2026-07-19 獨立複驗（以原先抓到 P8-R1～R3 的同一組探測腳本重跑）：
+> R1 對同一失敗 Run 第二次重試已被拒（先前連續 6 次全部成功）；
+> R2 以「兩筆 Run、弄壞最新那筆」的真實情境確認會回退到次新的有效 Run；
+> R3 建立 60 筆後實際裁切為 50 筆 Run 與 50 個 Artifact，pending Run 未被裁切，
+> `clear_history()` 正確保留執行中工作。三項修正均通過。
+
+### v7 新發現問題修正（2026-07-19）
+
+- [x] P8-R4. **崩潰 Run 復原**：每次啟動產生 process session id；讀取、建立、清理或重試前，
+      會把前一個 session 留下的 pending／running Run 標記為 failed，寫入明確中斷原因，
+      保留 partial Artifact 並允許重新執行。手動清理不再把殭屍誤認為執行中工作。
+- [x] P8-R5. **損毀 Run Artifact 保護**：以 Run JSON 檔名中的 UUID 將最近 5 筆損毀 Run
+      加入保留集合；自動 prune 不再刪除其 Markdown 成果。超出診斷保留上限或使用者明確
+      執行清理時，才會連同損毀 Run 一起移除。
+- [x] P8-R6. **重試最新紀錄順序**：先寫入舊 Run 的 `retry_to`，最後才寫新 Run，
+      retry 返回後 `latest_run()` 立即指向新 pending Run。若中斷造成 `retry_to` 指向不存在
+      的 Run，下次重試會清除失效指標並重新建立，不形成死路。
+
+> P8-R4～R6 回歸已覆蓋：stale running 復原為可重試 failed 且可清理、保留中壞 JSON 的
+> Markdown Artifact 不被 prune、retry 後 latest 立即指向新 Run。全專案測試與修正版
+> EXE 四格式／Workflow／啟動驗證均通過。
 
 ### 後續里程碑
 

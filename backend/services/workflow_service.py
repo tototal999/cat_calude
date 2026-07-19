@@ -25,6 +25,7 @@ _LOCK = threading.RLock()
 MAX_RETRIES = 3
 MAX_COMPLETED_RUNS = 50
 MAX_CORRUPT_RUNS = 5
+_PROCESS_SESSION_ID = str(uuid.uuid4())
 
 
 def _now() -> str:
@@ -51,16 +52,53 @@ def get_run(run_id: str) -> dict[str, Any]:
         return {'error': '找不到 Workflow 執行紀錄。'}
 
 
+def _recover_stale_runs_unlocked() -> int:
+    recovered = 0
+    for path in RUNS_DIR.glob('*.json'):
+        try:
+            run = json.loads(path.read_text(encoding='utf-8'))
+        except (OSError, ValueError, json.JSONDecodeError):
+            continue
+        if (run.get('status') not in {'pending', 'running'}
+                or run.get('owner_session') == _PROCESS_SESSION_ID):
+            continue
+        current_step = run.get('current_step')
+        if current_step:
+            for step in run.get('steps', []):
+                if step.get('id') == current_step and step.get('status') == 'running':
+                    step.update({
+                        'status': 'failed',
+                        'completed_at': _now(),
+                        'error': '上次程式中斷，這個步驟未完成。',
+                    })
+                    break
+        run['status'] = 'failed'
+        run['cancel_requested'] = False
+        run['recovered_at'] = _now()
+        run['updated_at'] = _now()
+        run['recovery_error'] = '上次程式中斷，已將未完成 Workflow 標記為失敗，可重新執行。'
+        _write_run(run)
+        recovered += 1
+    return recovered
+
+
+def recover_stale_runs() -> int:
+    with _LOCK:
+        return _recover_stale_runs_unlocked()
+
+
 def latest_run() -> dict[str, Any]:
-    try:
-        paths = sorted(RUNS_DIR.glob('*.json'), key=lambda path: path.stat().st_mtime, reverse=True)
-    except OSError:
-        return {'error': '無法讀取 Workflow 執行紀錄。'}
-    for path in paths:
-        run = get_run(path.stem)
-        if not run.get('error'):
-            return run
-    return {'error': '尚無有效的 Workflow 執行紀錄。' if paths else '尚無 Workflow 執行紀錄。'}
+    with _LOCK:
+        _recover_stale_runs_unlocked()
+        try:
+            paths = sorted(RUNS_DIR.glob('*.json'), key=lambda path: path.stat().st_mtime, reverse=True)
+        except OSError:
+            return {'error': '無法讀取 Workflow 執行紀錄。'}
+        for path in paths:
+            run = get_run(path.stem)
+            if not run.get('error'):
+                return run
+        return {'error': '尚無有效的 Workflow 執行紀錄。' if paths else '尚無 Workflow 執行紀錄。'}
 
 
 def _remove_run_files(path: Path) -> int:
@@ -87,6 +125,7 @@ def _remove_run_files(path: Path) -> int:
 def _prune_history_unlocked() -> dict[str, int]:
     RUNS_DIR.mkdir(parents=True, exist_ok=True)
     ARTIFACTS_DIR.mkdir(parents=True, exist_ok=True)
+    _recover_stale_runs_unlocked()
     valid_finished: list[tuple[float, Path, dict[str, Any]]] = []
     corrupt: list[tuple[float, Path]] = []
     kept_ids: set[str] = set()
@@ -116,6 +155,11 @@ def _prune_history_unlocked() -> dict[str, int]:
         removed_runs += int(removed > 0)
         removed_artifacts += before
     corrupt.sort(key=lambda item: item[0], reverse=True)
+    for _mtime, path in corrupt[:MAX_CORRUPT_RUNS]:
+        try:
+            kept_ids.add(str(uuid.UUID(path.stem)))
+        except ValueError:
+            pass
     for _mtime, path in corrupt[MAX_CORRUPT_RUNS:]:
         removed_runs += int(_remove_run_files(path) > 0)
     for artifact in ARTIFACTS_DIR.glob('*_meeting-pack.md'):
@@ -137,6 +181,7 @@ def prune_history() -> dict[str, int]:
 
 def clear_history() -> dict[str, Any]:
     with _LOCK:
+        _recover_stale_runs_unlocked()
         active_ids: set[str] = set()
         removed_runs = removed_artifacts = 0
         for path in RUNS_DIR.glob('*.json'):
@@ -180,6 +225,7 @@ def create_document_meeting_pack(document_id: str, translate: bool = False) -> d
         'status': 'pending',
         'current_step': None,
         'cancel_requested': False,
+        'owner_session': _PROCESS_SESSION_ID,
         'retry_count': 0,
         'created_at': _now(),
         'updated_at': _now(),
@@ -188,6 +234,7 @@ def create_document_meeting_pack(document_id: str, translate: bool = False) -> d
         'artifacts': [],
     }
     with _LOCK:
+        _recover_stale_runs_unlocked()
         _write_run(run)
         _prune_history_unlocked()
     return run
@@ -195,6 +242,7 @@ def create_document_meeting_pack(document_id: str, translate: bool = False) -> d
 
 def cancel_run(run_id: str) -> dict[str, Any]:
     with _LOCK:
+        _recover_stale_runs_unlocked()
         run = get_run(run_id)
         if run.get('error'):
             return run
@@ -208,13 +256,17 @@ def cancel_run(run_id: str) -> dict[str, Any]:
 
 def retry_run(run_id: str) -> dict[str, Any]:
     with _LOCK:
+        _recover_stale_runs_unlocked()
         previous = get_run(run_id)
         if previous.get('error'):
             return previous
         if previous.get('status') not in {'failed', 'cancelled'}:
             return {'error': '只有失敗或已取消的 Workflow 可以重新執行。'}
         if previous.get('retry_to'):
-            return {'error': '此 Workflow 已經建立過重新執行的 Run。'}
+            successor = get_run(previous['retry_to'])
+            if not successor.get('error'):
+                return {'error': '此 Workflow 已經建立過重新執行的 Run。'}
+            previous.pop('retry_to', None)
         retry_count = int(previous.get('retry_count', 0))
         if retry_count >= MAX_RETRIES:
             return {'error': f'此 Workflow 已達重新執行上限（{MAX_RETRIES} 次）。'}
@@ -229,8 +281,8 @@ def retry_run(run_id: str) -> dict[str, Any]:
         run['retry_count'] = retry_count + 1
         previous['retry_to'] = run['run_id']
         previous['updated_at'] = _now()
-        _write_run(run)
         _write_run(previous)
+        _write_run(run)
         _prune_history_unlocked()
     return run
 

@@ -723,6 +723,7 @@ class WorkflowTests(unittest.TestCase):
                 self.assertEqual(retried['retry_of'], previous['run_id'])
                 self.assertEqual(retried['retry_count'], 1)
                 self.assertIn('translate', [step['id'] for step in retried['steps']])
+                self.assertEqual(workflows.latest_run()['run_id'], retried['run_id'])
                 duplicate = workflows.retry_run(previous['run_id'])
                 self.assertIn('已經建立過', duplicate['error'])
 
@@ -742,6 +743,19 @@ class WorkflowTests(unittest.TestCase):
                 workflows._write_run(previous)
                 result = workflows.retry_run(previous['run_id'])
             self.assertIn('只有失敗或已取消', result['error'])
+
+    def test_retry_repairs_pointer_to_missing_successor(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            runs_patch, artifacts_patch = self._directories(root)
+            with runs_patch, artifacts_patch:
+                previous = workflows.create_document_meeting_pack(self.DOCUMENT_ID)
+                previous['status'] = 'failed'
+                previous['retry_to'] = '11111111-1111-4111-8111-111111111111'
+                workflows._write_run(previous)
+                result = workflows.retry_run(previous['run_id'])
+            self.assertEqual(result['status'], 'pending')
+            self.assertEqual(result['retry_of'], previous['run_id'])
 
     def test_latest_run_skips_newest_corrupt_json(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -780,6 +794,48 @@ class WorkflowTests(unittest.TestCase):
                 self.assertEqual(cleared['active_runs_preserved'], 1)
                 self.assertTrue(workflows._run_path(active['run_id']).exists())
                 self.assertTrue(active_artifact.exists())
+
+    def test_stale_running_run_is_recovered_as_retryable_failure(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            runs_patch, artifacts_patch = self._directories(root)
+            with runs_patch, artifacts_patch:
+                stale = workflows.create_document_meeting_pack(self.DOCUMENT_ID)
+                stale['status'] = 'running'
+                stale['owner_session'] = 'previous-process'
+                stale['current_step'] = stale['steps'][0]['id']
+                stale['steps'][0]['status'] = 'running'
+                workflows._write_run(stale)
+
+                recovered = workflows.latest_run()
+                self.assertEqual(recovered['status'], 'failed')
+                self.assertIn('上次程式中斷', recovered['recovery_error'])
+                self.assertEqual(recovered['steps'][0]['status'], 'failed')
+                retried = workflows.retry_run(recovered['run_id'])
+                self.assertEqual(retried['status'], 'pending')
+                another = workflows.create_document_meeting_pack(self.DOCUMENT_ID)
+                another['status'] = 'running'
+                another['owner_session'] = 'previous-process'
+                workflows._write_run(another)
+                cleared = workflows.clear_history()
+                self.assertGreaterEqual(cleared['removed_runs'], 1)
+                self.assertFalse(workflows._run_path(another['run_id']).exists())
+                self.assertTrue(workflows._run_path(retried['run_id']).exists())
+
+    def test_retained_corrupt_run_keeps_its_markdown_artifact(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            runs_patch, artifacts_patch = self._directories(root)
+            with runs_patch, artifacts_patch:
+                run = workflows.create_document_meeting_pack(self.DOCUMENT_ID)
+                artifact = root / 'artifacts' / f'{run["run_id"]}_meeting-pack.md'
+                artifact.parent.mkdir(parents=True, exist_ok=True)
+                artifact.write_text('deliverable', encoding='utf-8')
+                workflows._run_path(run['run_id']).write_text('{broken', encoding='utf-8')
+
+                workflows.prune_history()
+                self.assertTrue(workflows._run_path(run['run_id']).exists())
+                self.assertTrue(artifact.exists())
 
 
 class WorkerTests(unittest.TestCase):

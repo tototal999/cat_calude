@@ -26,6 +26,14 @@
 - 2026-07-19 獨立測試確認正常：不支援副檔名回傳明確中文錯誤、執行中取消標記 `cancelled`
   並保留 partial Artifact、translate 步驟產出含翻譯的 Artifact、沿鏈重試上限生效、
   `verify_packaged_workflow.py` 重跑為 `QA_RESULT|STATUS:PASS`、`dist\ClaudeCat` 實測 77.1 MiB。
+- 2026-07-19 修正後獨立複驗：以原先抓到問題的同一組探測腳本重跑，P8-R1～R3 三項修正
+  **全部通過**（第二次重試被拒、兩筆 Run 弄壞最新那筆會回退到次新有效 Run、建立 60 筆
+  實際裁切為 50 筆且 pending 未被裁切）。
+- 同輪發現的 P8-R4～R6 已修正：以 process session 辨識並復原前次崩潰留下的
+  pending／running Run；損毀 Run 依檔名 UUID 保留其 Markdown Artifact；retry 改為最後寫
+  新 Run，`latest_run()` 立即指向新 pending Run，失效 `retry_to` 也可自動修復。
+- P8-R4～R6 回歸與修正版 EXE 複驗通過：stale Run 可重試／清理、損毀 JSON 不誤刪成果、
+  retry 最新順序正確；四格式文件、完整 Workflow 與 8 秒啟動均 PASS，大小維持 77.1 MiB。
 
 ## v6.2 桌面 AI 工具箱（2026-07-19）
 
@@ -38,7 +46,7 @@
 - 用量徽章同時顯示 Claude／Codex 時改為上下兩行，避免徽章過寬；Codex app-server 的安全錯誤訊息會直接顯示，便於判斷是否需要重新登入。
 - 2026-07-19 第二輪人工驗收：拖曳位置持久化、點擊快速提問、Skin 切換持久化、排程 60 秒自動收合、用量 OFF 零請求、閒置睡眠／驚醒與所有工具頁停靠均通過。Esc 原回報經真正的 Windows `VK_ESCAPE` 驗證為工具注入限制造成的假陽性，保留輸入框 Esc 綁定作防禦性處理。另發現最大化工具頁關閉後桌寵會以縮小時座標還原而出界；已補啟動、拖曳、尺寸還原與徽章的夾邊（`_clamp_pet_position()`），同日人工複驗通過：開排程→最大化→關閉後桌寵落在 (1238,640)-(1366,768)，完整留在 1366x768 畫面內，徽章亦被夾住。
 - 修正第三輪審查：文件檢索改用 CJK 詞組與最低相關門檻；長文件摘要／比較改為跨全文抽樣並明示非完整涵蓋；Word 表格與 Excel 欄標題會隨證據保留。翻譯以佔位符實際鎖定程式碼／SQL／識別碼，模型未完整保留即回報錯誤。
-- 驗證：Python 3.11 `test_logic.py` **63/63** 通過（此為全專案唯一記錄測試數量之處，其他文件一律不重複寫數字）（含 Workflow 重試唯一性、壞檔回退、歷史保留／清理、成功／部分成果／匯出失敗／取消／格式邊界、本機 OpenAI-compatible 假端點、中文誤命中、抽樣涵蓋、sidecar 路由、JSON 深度、翻譯還原、weekly 非當日、disabled/delete 排程、閒置睡眠與工具頁停靠回歸）；`node --check frontend/chat.js` 與 `git diff --check` 通過。翻譯／Health Check 的實際內網端點連線待使用者環境確認。文件助手已確認採公司內網 endpoint；不再將「完全離線推論」列為驗收阻塞。
+- 驗證：Python 3.11 `test_logic.py` **66/66** 通過（此為全專案唯一記錄測試數量之處，其他文件一律不重複寫數字）（含 Workflow 崩潰復原、損毀成果保護、retry 最新順序／失效指標修復、重試唯一性、壞檔回退、歷史保留／清理、成功／部分成果／匯出失敗／取消／格式邊界、本機 OpenAI-compatible 假端點、中文誤命中、抽樣涵蓋、sidecar 路由、JSON 深度、翻譯還原、weekly 非當日、disabled/delete 排程、閒置睡眠與工具頁停靠回歸）；`node --check frontend/chat.js` 與 `git diff --check` 通過。翻譯／Health Check 的實際內網端點連線待使用者環境確認。文件助手已確認採公司內網 endpoint；不再將「完全離線推論」列為驗收阻塞。
 
 ### v6.2 尚待完成的實機項目
 

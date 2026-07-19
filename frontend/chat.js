@@ -205,6 +205,12 @@ function renderWorkflowRun(run) {
   const title = document.createElement('strong');
   title.textContent = `文件會議包 · ${run.status}`;
   box.appendChild(title);
+  if (run.recovery_error) {
+    const recovery = document.createElement('div');
+    recovery.className = 'document-coverage-note';
+    recovery.textContent = run.recovery_error;
+    box.appendChild(recovery);
+  }
   const steps = document.createElement('div');
   steps.className = 'workflow-steps';
   (run.steps || []).forEach(step => {
