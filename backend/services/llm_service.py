@@ -49,16 +49,24 @@ _DEFAULTS: dict[str, Any] = {
     'debug_log': False,
     'max_file_chars': 50000,
     'max_file_bytes': 10 * 1024 * 1024,
+    'provider': 'company',
+    'request_timeout': 120,
+    'model_mode': 'auto',
+    'model_modes': {},
+    'task_models': {},
+    'translation_glossary': {},
 }
 
 _config: dict[str, Any] = {}
 _config_file: Path | None = None
 _debug_dir: Path | None = None
+_local_sidecar_active = False
 
 
 def init(config_file: Path) -> None:
     """Load LLM settings from the ``llm`` block in config.json."""
-    global _config, _config_file, _debug_dir
+    global _config, _config_file, _debug_dir, _local_sidecar_active
+    _local_sidecar_active = False
     _config_file = config_file
     try:
         data = json.loads(config_file.read_text(encoding='utf-8'))
@@ -120,7 +128,120 @@ def list_models() -> list[str]:
 
 
 def current_model() -> str:
-    return str(_get('model') or '')
+    return model_for_task('chat')
+
+
+def request_timeout() -> int:
+    value = _get('request_timeout')
+    return int(value) if isinstance(value, (int, float)) and 5 <= value <= 600 else 120
+
+
+def translation_glossary() -> dict[str, str]:
+    glossary = _get('translation_glossary')
+    if not isinstance(glossary, dict):
+        return {}
+    return {str(key): str(value) for key, value in glossary.items()
+            if str(key).strip() and str(value).strip()}
+
+
+_MODEL_MODES = (
+    ('auto', '自動選擇'),
+    ('fast', '快速'),
+    ('quality', '高品質'),
+    ('code', '程式分析'),
+    ('translation', '翻譯'),
+)
+_TASKS = ('chat', 'translation', 'document', 'code', 'error_analysis')
+
+
+def list_model_modes() -> list[dict[str, str]]:
+    return [{'id': key, 'label': label} for key, label in _MODEL_MODES]
+
+
+def model_mode() -> str:
+    mode = str(_get('model_mode') or 'auto')
+    return mode if mode in {key for key, _label in _MODEL_MODES} else 'auto'
+
+
+def model_for_task(task: str, fallback: str = '') -> str:
+    """Resolve a real model id without exposing routing details to normal users."""
+    if _local_sidecar_active or _get('provider') == 'local':
+        # A llama.cpp sidecar accepts its own alias, not company task-route ids.
+        return str(_get('model') or 'local-model').strip()
+    task = str(task or 'chat')
+    task_models = _get('task_models')
+    if isinstance(task_models, dict):
+        selected = str(task_models.get(task) or '').strip()
+        if selected:
+            return selected
+    modes = _get('model_modes')
+    if isinstance(modes, dict):
+        selected = str(modes.get(model_mode()) or '').strip()
+        if selected:
+            return selected
+    return str(fallback or _get('model') or '').strip()
+
+
+def public_settings() -> dict[str, Any]:
+    """Return editable LLM settings; intentionally excludes the API key."""
+    modes = _get('model_modes')
+    routes = _get('task_models')
+    return {
+        'provider': str(_get('provider') or 'company'),
+        'base_url': str(_get('base_url') or ''),
+        'model': str(_get('model') or ''),
+        'request_timeout': request_timeout(),
+        'model_mode': model_mode(),
+        'model_modes': modes if isinstance(modes, dict) else {},
+        'task_models': routes if isinstance(routes, dict) else {},
+        'api_key_managed_externally': True,
+    }
+
+
+def save_toolbox_settings(values: dict[str, Any]) -> dict[str, Any]:
+    """Validate and merge non-secret advanced settings into runtime config."""
+    if not isinstance(values, dict):
+        raise ValueError('設定格式無效。')
+    patch: dict[str, Any] = {}
+    provider = str(values.get('provider') or '').strip()
+    if provider:
+        if provider not in {'company', 'ollama', 'openai-compatible', 'local'}:
+            raise ValueError('Provider 設定無效。')
+        patch['provider'] = provider
+    base_url = str(values.get('base_url') or '').strip().rstrip('/')
+    if base_url:
+        if not re.match(r'^https?://[^\s/]+(?::\d+)?(?:/[^\s]*)?$', base_url):
+            raise ValueError('API URL 必須是 http 或 https URL。')
+        patch['base_url'] = base_url
+    model = str(values.get('model') or '').strip()
+    if model:
+        patch['model'] = model[:200]
+    timeout = values.get('request_timeout')
+    if timeout not in (None, ''):
+        try:
+            timeout = int(timeout)
+        except (TypeError, ValueError) as exc:
+            raise ValueError('Timeout 必須是數字。') from exc
+        if not 5 <= timeout <= 600:
+            raise ValueError('Timeout 必須介於 5 到 600 秒。')
+        patch['request_timeout'] = timeout
+    mode = str(values.get('model_mode') or '').strip()
+    if mode:
+        if mode not in {key for key, _label in _MODEL_MODES}:
+            raise ValueError('模型模式設定無效。')
+        patch['model_mode'] = mode
+    for key, allowed in (('model_modes', {item[0] for item in _MODEL_MODES}),
+                         ('task_models', set(_TASKS))):
+        value = values.get(key)
+        if value is not None:
+            if not isinstance(value, dict):
+                raise ValueError(f'{key} 必須是物件。')
+            patch[key] = {name: str(value.get(name) or '').strip()[:200]
+                          for name in allowed if name in value}
+    if patch:
+        settings.merge_config({'llm': patch})
+        _config.update(patch)
+    return public_settings()
 
 
 def use_local_endpoint(endpoint: str, model: str = '') -> None:
@@ -130,9 +251,10 @@ def use_local_endpoint(endpoint: str, model: str = '') -> None:
     """
     if not endpoint.startswith('http://127.0.0.1:'):
         raise ValueError('本機模型端點必須使用 127.0.0.1。')
+    global _local_sidecar_active
+    _local_sidecar_active = True
     _config['base_url'] = endpoint
-    if model:
-        _config['model'] = model
+    _config['model'] = str(model or 'local-model').strip()
 
 
 def is_local_endpoint() -> bool:
@@ -220,16 +342,19 @@ def chat(messages: list[dict[str, str]],
     choice = (data.get('choices') or [{}])[0]
     content = (choice.get('message') or {}).get('content', '')
     used_model = data.get('model', model)
+    if not isinstance(content, str) or not content.strip():
+        return {'error': '模型回傳空白內容', 'context_overflow': False}
 
     logger.info('llm ok in %.1fs model=%s tokens=%s',
                 elapsed, used_model, data.get('usage', {}).get('total_tokens'))
     return {'content': content, 'model': used_model}
 
 
-def probe(timeout: int = 15) -> str | None:
+def probe(timeout: int | None = None, model: str | None = None) -> str | None:
     """Quick connectivity check (max_tokens=1).  Returns None on success,
     or an error string on failure.  Used for the warm-up probe on window open."""
-    model = current_model()
+    timeout = timeout if isinstance(timeout, int) and timeout > 0 else min(request_timeout(), 30)
+    model = model or current_model()
     base = str(_get('base_url') or _DEFAULTS['base_url']).rstrip('/')
     url = f'{base}/chat/completions'
 

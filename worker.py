@@ -2,7 +2,10 @@ import sys
 from pathlib import Path
 import json
 import csv
+import re
 from io import StringIO
+
+MAX_ROWS_PER_SHEET = 10_000
 
 for _stream in (sys.stdout, sys.stderr):
     if _stream is not None and hasattr(_stream, 'reconfigure'):
@@ -17,14 +20,24 @@ def main(filepath_str, max_chars=50000):
             
         if p.suffix.lower() == '.xlsx':
             from openpyxl import load_workbook
-            workbook = load_workbook(p, read_only=True, data_only=True)
+            workbook = load_workbook(p, read_only=False, data_only=True)
             try:
                 output = StringIO()
                 writer = csv.writer(output)
-                for row_no, row in enumerate(workbook.active.iter_rows(values_only=True), start=1):
-                    writer.writerow(['' if value is None else value for value in row])
-                    if row_no >= 10000:
-                        break
+                truncated = []
+                for sheet in workbook.worksheets:
+                    writer.writerow([f'# 工作表：{sheet.title}'])
+                    rows = sheet.iter_rows(values_only=True)
+                    try:
+                        for row_no, row in enumerate(rows, start=1):
+                            if row_no > MAX_ROWS_PER_SHEET:
+                                truncated.append(sheet.title)
+                                break
+                            writer.writerow(['' if value is None else value for value in row])
+                    finally:
+                        rows.close()
+                if truncated:
+                    writer.writerow([f'# 警告：{", ".join(truncated)} 僅提供前 {MAX_ROWS_PER_SHEET:,} 列。'])
                 content = output.getvalue()
             finally:
                 workbook.close()
@@ -34,9 +47,16 @@ def main(filepath_str, max_chars=50000):
             try:
                 output = StringIO()
                 writer = csv.writer(output)
-                sheet = workbook.sheet_by_index(0)
-                for row_no in range(min(sheet.nrows, 10000)):
-                    writer.writerow(sheet.row_values(row_no))
+                truncated = []
+                for sheet_no in range(workbook.nsheets):
+                    sheet = workbook.sheet_by_index(sheet_no)
+                    writer.writerow([f'# 工作表：{sheet.name}'])
+                    for row_no in range(min(sheet.nrows, MAX_ROWS_PER_SHEET)):
+                        writer.writerow(sheet.row_values(row_no))
+                    if sheet.nrows > MAX_ROWS_PER_SHEET:
+                        truncated.append(sheet.name)
+                if truncated:
+                    writer.writerow([f'# 警告：{", ".join(truncated)} 僅提供前 {MAX_ROWS_PER_SHEET:,} 列。'])
                 content = output.getvalue()
             finally:
                 workbook.release_resources()
@@ -75,17 +95,21 @@ def generate_ppt(output_path_str, template_path_str=None):
         else:
             prs = Presentation()
         
-        # Simple Markdown to PPT parser
-        # Expects: # Slide Title \n ## Content \n - point 1...
-        slides_data = content.split('# Slide')
+        # Each top-level Markdown heading is a slide.  Some models emit
+        # ``## Slide 2`` instead; accept that form when no H1 slide exists.
+        headings = list(re.finditer(r'(?m)^#\s+(.+?)\s*$', content))
+        if not headings:
+            headings = list(re.finditer(r'(?mi)^##\s+(slide\b.+?)\s*$', content))
+        if not headings:
+            raise ValueError('簡報內容需以「# 標題」或「## Slide 標題」分頁。')
+        slides_data = []
+        for index, heading in enumerate(headings):
+            end = headings[index + 1].start() if index + 1 < len(headings) else len(content)
+            title = re.sub(r'(?i)^slide\s*:?\s*', '', heading.group(1)).strip()
+            slides_data.append((title, content[heading.end():end]))
         
-        for slide_text in slides_data:
-            slide_text = slide_text.strip()
-            if not slide_text:
-                continue
-                
-            lines = slide_text.split('\n')
-            title = lines[0].strip().lstrip(':').strip()
+        for title, slide_text in slides_data:
+            lines = slide_text.strip().split('\n')
             
             # Find bullet points
             bullets = []

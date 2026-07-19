@@ -16,8 +16,11 @@
     </div>
     <button class="btn-new-chat" onclick="newChat()"><span>+</span> New chat</button>
     <nav class="sidebar-nav">
-      <button class="nav-item nav-item-static" onclick="showTab('chat')"><span>⌂</span> Chat</button>
+      <button class="nav-item nav-item-static" id="nav-chat" onclick="showTab('chat')"><span>⌂</span> Chat</button>
       <button class="nav-item nav-item-static" id="nav-documents" onclick="showTab('documents')"><span>▤</span> 文件助手</button>
+      <button class="nav-item nav-item-static" id="nav-json" onclick="showTab('json')"><span>{ }</span> JSON 工具</button>
+      <button class="nav-item nav-item-static" id="nav-translate" onclick="showTab('translate')"><span>文</span> 翻譯</button>
+      <button class="nav-item nav-item-static" id="nav-settings" onclick="showTab('settings')"><span>⚙</span> 模型設定</button>
       <button class="nav-item nav-item-static" id="nav-schedule" onclick="showTab('schedule')"><span>◷</span> Schedule</button>
     </nav>
     <div class="history-section">
@@ -109,6 +112,37 @@
           <div class="document-ask-row"><input id="document-question" placeholder="例如：有哪些注意事項？"><button class="primary" onclick="askDocument()">送出</button></div>
         </div>
         <div id="document-answer" class="document-answer" aria-live="polite"></div>
+      </div>
+    </section>
+
+    <section id="page-json" class="page toolbox-page">
+      <div class="toolbox-content">
+        <div class="page-heading"><p class="eyebrow">OFFLINE RULE TOOL</p><h1>JSON 工具</h1><p>格式化、壓縮、驗證與樹狀檢視都在本機完成，不使用模型。</p></div>
+        <div class="tool-actions"><button class="primary" onclick="runJsonTool('format')">格式化</button><button class="secondary" onclick="runJsonTool('minify')">壓縮</button><button class="secondary" onclick="runJsonTool('validate')">找錯誤</button><button class="secondary" onclick="copyJsonResult()">複製結果</button></div>
+        <p id="json-status" class="tool-status">貼上 JSON 後選擇操作。</p>
+        <div class="tool-grid"><label>輸入 JSON<textarea id="json-input" class="tool-textarea" spellcheck="false" placeholder='{"data": [{"id": 1}]}'></textarea></label><label>結果<textarea id="json-output" class="tool-textarea" spellcheck="false" readonly></textarea></label></div>
+        <div class="tool-search"><input id="json-search" placeholder="搜尋 Key 或 Value"><button class="secondary" onclick="runJsonTool('search')">搜尋</button></div>
+        <div id="json-matches" class="json-matches"></div>
+        <div class="tree-card"><div class="tree-heading"><span>Tree View</span><span id="json-path">$</span><span class="tree-controls"><button class="secondary" onclick="expandJsonTree()">展開全部</button><button class="secondary" onclick="collapseJsonTree()">收合全部</button></span></div><div id="json-tree" class="json-tree"></div></div>
+      </div>
+    </section>
+
+    <section id="page-translate" class="page toolbox-page">
+      <div class="toolbox-content">
+        <div class="page-heading"><p class="eyebrow">TASK-ROUTED LLM</p><h1>英文／繁體中文翻譯</h1><p>翻譯會依「翻譯」任務模型路由；程式碼與固定識別字可保留原樣。</p></div>
+        <div class="translate-options"><label>來源語言<select disabled><option>自動偵測</option></select></label><label>目標語言<select id="translation-target"><option value="zh-TW">繁體中文</option><option value="en">英文</option></select></label><label>模式<select id="translation-mode"><option value="general">一般</option><option value="technical" selected>技術</option><option value="business">商務</option><option value="bilingual">中英對照</option></select></label><label class="checkbox-label"><input id="translation-code" type="checkbox" checked> 保留程式碼</label><label class="checkbox-label"><input id="translation-table" type="checkbox" checked> 保留表格</label><label class="checkbox-label"><input id="translation-glossary" type="checkbox" checked> 使用公司術語表</label></div>
+        <div class="tool-grid"><label>原文<textarea id="translation-input" class="tool-textarea" placeholder="貼上英文或繁體中文內容"></textarea></label><label>譯文<textarea id="translation-output" class="tool-textarea" readonly></textarea></label></div>
+        <div class="tool-actions"><button class="primary" onclick="translateText()">翻譯</button><button class="secondary" onclick="copyTranslation()">複製譯文</button><span id="translation-status" class="tool-status"></span></div>
+      </div>
+    </section>
+
+    <section id="page-settings" class="page toolbox-page">
+      <div class="toolbox-content settings-content">
+        <div class="page-heading"><p class="eyebrow">ADVANCED</p><h1>模型設定</h1><p>一般使用時從頂端選擇模型模式；此處才調整內網端點與任務路由。API Key 由公司安裝或執行期設定管理。</p></div>
+        <div class="settings-card"><div class="settings-row"><label>Provider<select id="llm-provider"><option value="company">公司 LLM</option><option value="ollama">Ollama</option><option value="openai-compatible">OpenAI-compatible</option><option value="local">本機模型</option></select></label><label>API URL<input id="llm-base-url" placeholder="http://host/v1"></label><label>預設模型<input id="llm-model" placeholder="model-id"></label><label>Timeout（秒）<input id="llm-timeout" type="number" min="5" max="600"></label></div><p class="setting-note">API Key 不會顯示或存入本頁，請由公司安裝程序或 `%LOCALAPPDATA%\ClaudeCat\config.json` 管理。</p></div>
+        <div class="settings-card"><h2>模式對應模型</h2><div class="settings-row mode-settings"><label>快速<input id="mode-fast"></label><label>高品質<input id="mode-quality"></label><label>程式分析<input id="mode-code"></label><label>翻譯<input id="mode-translation"></label></div></div>
+        <div class="settings-card"><h2>任務模型設定</h2><div class="settings-row route-settings"><label>一般問答<input id="task-chat"></label><label>翻譯<input id="task-translation"></label><label>文件閱讀<input id="task-document"></label><label>程式分析<input id="task-code"></label><label>錯誤分析<input id="task-error-analysis"></label></div></div>
+        <div class="tool-actions"><button class="primary" onclick="saveToolboxSettings()">儲存設定</button><button class="secondary" onclick="runHealthCheck()">測試模型連線</button><span id="settings-status" class="tool-status"></span></div>
       </div>
     </section>
   </main>

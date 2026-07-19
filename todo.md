@@ -30,11 +30,11 @@
 - [x] P6-1. 建立「聊聊天」與「拖文件給我」兩個入口，拖檔後開啟文件工作區。（2026-07-18：pywebview 文件頁與桌寵右鍵入口）
 - [o] P6-2. 已在文件索引中整合本機 MarkItDown 轉 Markdown；仍待將 Python runtime／sidecar 隨公司離線安裝包封裝，並由主程式以 `127.0.0.1` 生命週期管理。（2026-07-18）
 - [x] P6-3. 支援 PDF、DOCX、PPTX、XLSX、CSV、Markdown、TXT 轉換，並保留來源 metadata。（2026-07-18：離線原生解析）
-- [x] P6-4. 實作來源定位：PDF 頁碼、Word 標題／段落、PPT 投影片、Excel 工作表與儲存格範圍；不得從 Markdown 猜測 PDF 頁碼。（2026-07-18）
-- [x] P6-5. 本機切塊與檢索：只將相關區塊交給執行期設定的 `llm.base_url` 或未來 GGUF／llama.cpp 相容模型。（2026-07-18：文件問答只傳遞檢索命中的來源內容與定位資訊）
+- [x] P6-4. 實作來源定位：PDF 頁碼、Word 標題／段落／表格列、PPT 投影片、Excel 工作表與儲存格範圍及欄標題；不得從 Markdown 猜測 PDF 頁碼。（2026-07-19）
+- [x] P6-5. 本機切塊與檢索：採 CJK 詞組與最低相關分數，只將相關區塊交給執行期設定的 `llm.base_url` 或未來 GGUF／llama.cpp 相容模型。（2026-07-19）
 - [x] P6-6. 預設開啟「只回答文件內容」；無證據時回覆「此文件沒有描述此問題，無法依文件確認。」（2026-07-18：本機 evidence-first 檢索）
 - [x] P6-7. 由 metadata 產生回答引用與相關內容範圍，不接受僅由 LLM 生成的引用。（2026-07-18：檔名、標題與行號）
-- [x] P6-8. 實作摘要、問問題、流程／SOP、整理表格、比較文件與建議問題介面。（2026-07-18）
+- [x] P6-8. 實作摘要、問問題、流程／SOP、整理表格、比較文件與建議問題介面；長文件採跨全文抽樣，UI／提示詞明示「非完整文件結論」。（2026-07-19）
 - [x] P6-9. 掃描型 PDF 無可擷取文字時提示需 OCR；MVP 不執行 OCR。（2026-07-18）
 - [x] P6-10. 文件索引存於 `%LOCALAPPDATA%\ClaudeCat\documents\`；可移除索引且不刪原始檔，診斷 log 不記錄文件全文。（2026-07-18）
 - [x] P6-10a. 移除聊天頁對 highlight.js CDN 的執行期依賴；離線時仍可閱讀程式碼區塊。（2026-07-18）
@@ -45,13 +45,37 @@ Claude／Codex limits 與聊天／文件助手完全獨立，預設 OFF。兩者
 
 ### v6.1 驗收
 
-- [ ] P6-A1. 離線安裝後，不需網路、Ollama 或命令列，即可使用一般聊天及文件助手。
-- [x] P6-A2. PDF、DOCX、PPTX、XLSX 各以至少一份測試檔驗證：每項答案事實都有正確來源定位。（2026-07-18：`verify_packaged_documents.py` 以新版 EXE 驗證索引與來源定位）
+- [x] P6-A1. 使用者已接受文件助手使用公司內網 LLM；文件與索引留本機，不需 Ollama 或命令列。（2026-07-19）
+- [o] P6-A2. PDF、DOCX、PPTX、XLSX 各以至少一份測試檔驗證索引與原生來源定位；「長文件完整摘要／每項答案事實」尚未完成端對端語意驗證，不宣稱完成。（2026-07-19）
 - [x] P6-A3. 文件未提及的問題不臆測；掃描 PDF 顯示 OCR 限制。（2026-07-18：單元測試）
 
 **2026-07-18 實測紀錄：**LLM endpoint 可由使用者執行期設定；公開 repo 不記錄內網 URL、模型或憑證。文件問答 bridge 測試確認只傳遞檢索命中的來源內容與定位資訊。
 
 **2026-07-18 瘦身與驗證：**Excel worker 改用 `openpyxl`／`xlrd`，移除 pandas/numpy；打包時排除未使用的 pyarrow、onnxruntime、grpc、oracledb 與 pypdfium2。新版 `dist\\ClaudeCat` 為 **77.0 MiB**；`verify_packaged_documents.py` 已以打包 EXE 驗證 PDF、DOCX、PPTX、XLSX 的索引與來源定位。
+
+---
+
+## v6.2 — 桌面 AI 工具箱（2026-07-19）
+
+> 規格來源：[desktop-ai-toolbox-mvp.md](desktop-ai-toolbox-mvp.md)。公司 LLM 只能使用使用者執行期設定的內網端點；不把端點、模型或 API Key 寫入 repo。
+
+- [x] P7-1. JSON 工具：Format、Minify、Validate（行／欄錯誤）、Copy、搜尋、Tree View／JSONPath；格式化與驗證不使用 LLM。（2026-07-19）
+- [x] P7-2. 翻譯工具：英／繁中、一般／技術／商務／中英對照；保留程式碼與表格；本機術語表。（2026-07-19）
+- [x] P7-3. 模型模式：一般 UI 顯示自動／快速／高品質／程式分析／翻譯，不直接曝露模型 ID。（2026-07-19）
+- [x] P7-4. 任務模型路由：聊天、翻譯、文件、程式分析、錯誤分析可各自指定模型，未設定時安全退回預設模型。（2026-07-19）
+- [x] P7-5. 進階模型設定與健康檢查：Provider、端點、預設模型、逾時、模式／任務對應；API Key 維持由安裝／執行期設定提供，不在 UI 編輯。（2026-07-19）
+- [x] P7-A1. JSON 工具在 LLM 離線時完全可用；非法 JSON 顯示正確行、欄，並限制輸入大小／深度／節點數。（2026-07-19：確定性單元測試）
+- [o] P7-A2. 翻譯與健康檢查錯誤直接顯示；程式碼／SQL／JSON Key／API path／檔名／錯誤碼以佔位符實際鎖定並驗證還原；待使用者內網端點實機確認。（2026-07-19）
+- [x] P7-A3. 路由、設定 merge、sidecar 模型覆寫、本機 OpenAI-compatible 假端點與 worker／排程反例均有回歸測試。（2026-07-19：Python 3.11 `test_logic.py` 50/50、`node --check frontend/chat.js`、`git diff --check`）
+- [x] P7-A4. 已於第三輪修正後重新打包 `ClaudeCat.exe` 並執行啟動煙霧測試；啟動 5 秒仍存活，且 `verify_packaged_documents.py` 驗證 PDF／DOCX／PPTX／XLSX 索引與來源定位通過。（2026-07-19）
+
+### 已知後續風險（不得宣稱已完成）
+
+- [ ] P6-R1. 含少量浮水印文字的掃描 PDF 仍可能被視為可讀；需做逐頁低文字量警示，不能只判斷「完全無文字」。
+- [ ] P6-R2. Word 的頁首頁尾／文字方塊與文件更新後的索引失效偵測（檔案 hash／mtime）尚未實作。
+- [x] P7-R1. 一般聊天的 XLSX worker 已讀取全部工作表，並在任一工作表超過 10,000 列時明確輸出截斷警告。（2026-07-19：回歸測試）
+- [x] P7-R3. PPTX worker 同時支援 `# 標題` 與 `## Slide 標題` 分頁；沒有合法分頁時明確失敗，不再靜默產生單頁。（2026-07-19：回歸測試）
+- [ ] P7-R2. Health Check 目前只驗證聊天模型；仍待逐一驗證已設定的翻譯／文件等任務路由。
 
 ---
 
@@ -86,15 +110,15 @@ Claude／Codex limits 與聊天／文件助手完全獨立，預設 OFF。兩者
 - [o] daily：2 分鐘後＋lead_min=1 → 提前卡與正點卡各彈一次
       *(2026-07-17 實機驗證：08:51 lead、08:52 ontime 各觸發一次，log 確認)*
 - [x] lead_min=0 只彈正點；weekly 非當日不觸發；hourly 每小時該分鐘觸發
-      *(`test_logic.py` 的 `SchedulerTests` 已覆蓋 daily、weekly、hourly、跨午夜 lead 與壞 JSON；全套 28 項測試通過，2026-07-18)*
-- [x] enabled=false／刪除後不觸發 *(test_logic.py 驗證)*
+      *(`test_logic.py` 的 `SchedulerTests` 已覆蓋 daily、weekly（含非當日）、hourly、跨午夜 lead 與壞 JSON；全套 50 項測試通過，2026-07-19)*
+- [x] enabled=false／刪除後不觸發 *(test_logic.py 實際建立 disabled 項目並呼叫 `delete()` 驗證)*
 - [x] schedule.json 改壞格式 → 明確指出錯誤筆，其餘正常 *(test_logic.py 驗證)*
 - [o] 彈卡 60s 自動收合；點擊即關；表單即改即存、重啟生效
       *(2026-07-17 實機看過彈卡外觀正常；60s 自動收合與表單持久化尚未逐項計時驗證)*
 - [ ] 排程運作期間貓不掉幀
 - [ ] 用量 OFF 後 log 零 API 請求、貓恆速
-- [x] 改壞 credentials → 只彈一次異常卡＋選單（異常）；修復自動恢復；ON/OFF 重啟保留
-      *(test_logic.py 驗證邏輯；實機用真憑證未测)*
+- [o] 改壞 credentials → 只彈一次異常卡＋選單（異常）；修復自動恢復；ON/OFF 重啟保留
+      *(`api.py` 僅驗證 credentials 讀取；桌寵監控、彈卡與重啟持久化尚未端對端驗證，2026-07-19)*
 
 **2026-07-17 額外修復（實機測試中發現，spec 未列但屬合理範圍）：**
 - 徽章文字寬度變化時（例如 `...` → `64% W70% | 17:00`）未重新置中，

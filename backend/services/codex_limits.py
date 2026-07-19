@@ -25,9 +25,14 @@ def find_executable() -> Path | None:
     if not local_app_data:
         return None
     bin_dir = Path(local_app_data) / 'OpenAI' / 'Codex' / 'bin'
-    candidates = sorted(bin_dir.glob('*/codex.exe'), key=lambda path: path.stat().st_mtime,
-                        reverse=True)
-    return candidates[0] if candidates else None
+    candidates = []
+    for path in bin_dir.glob('*/codex.exe'):
+        try:
+            candidates.append((path.stat().st_mtime, path))
+        except OSError:
+            continue
+    candidates.sort(key=lambda item: item[0], reverse=True)
+    return candidates[0][1] if candidates else None
 
 
 def fetch_usage() -> dict[str, Any]:
@@ -58,7 +63,7 @@ def fetch_usage() -> dict[str, Any]:
 def _request_rate_limits(executable: Path) -> dict[str, Any]:
     process = subprocess.Popen(
         [str(executable), 'app-server', '--stdio'],
-        stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+        stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
         text=True, encoding='utf-8', bufsize=1,
     )
     assert process.stdin is not None and process.stdout is not None
@@ -124,4 +129,6 @@ def _number_or_none(value: Any) -> float | None:
 def _unix_to_iso(value: Any) -> str | None:
     if not isinstance(value, (int, float)):
         return None
-    return datetime.fromtimestamp(value, tz=timezone.utc).isoformat()
+    # JSON-RPC providers commonly use Unix milliseconds; normalize both forms.
+    seconds = value / 1000 if value > 100_000_000_000 else value
+    return datetime.fromtimestamp(seconds, tz=timezone.utc).isoformat()

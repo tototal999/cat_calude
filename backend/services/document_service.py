@@ -18,7 +18,8 @@ logger = logging.getLogger('claudecat')
 
 DOCUMENTS_DIR = settings.LOG_DIR / 'documents'
 _SUPPORTED_SUFFIXES = {'.txt', '.md', '.csv', '.pdf', '.docx', '.pptx', '.xlsx'}
-_TOKEN = re.compile(r"[A-Za-z0-9_]+|[\u4e00-\u9fff]", re.UNICODE)
+_TOKEN = re.compile(r"[A-Za-z0-9_]+|[\u4e00-\u9fff]+", re.UNICODE)
+_CJK_FUNCTION_CHARS = set('的是了在有和與及或為可可以請幾多少嗎呢吧啊')
 
 
 def _ensure_dir() -> None:
@@ -26,10 +27,22 @@ def _ensure_dir() -> None:
 
 
 def _tokens(text: str) -> set[str]:
-    return {
-        item.lower() for item in _TOKEN.findall(text)
-        if len(item) > 1 or '\u4e00' <= item <= '\u9fff'
-    }
+    """Return searchable terms without treating every CJK character as proof.
+
+    CJK text has no spaces.  Bi-grams retain useful terms such as ``付款期限``
+    while avoiding a single common character (for example ``假``) matching an
+    unrelated policy.
+    """
+    terms: set[str] = set()
+    for item in _TOKEN.findall(text):
+        if '\u4e00' <= item[0] <= '\u9fff':
+            for index in range(len(item) - 1):
+                gram = item[index:index + 2]
+                if not any(char in _CJK_FUNCTION_CHARS for char in gram):
+                    terms.add(gram)
+        elif len(item) > 1:
+            terms.add(item.lower())
+    return terms
 
 
 def _chunks(text: str, suffix: str) -> list[dict]:
@@ -113,6 +126,21 @@ def _extract_docx(path: Path) -> list[dict]:
         locator = f'第 {paragraph_no} 段' + (f' · {heading}' if heading else '')
         chunks.append({'text': text, 'source': _source(
             'word_paragraph', locator, heading=heading, paragraph=paragraph_no)})
+    for table_no, table in enumerate(Document(path).tables, start=1):
+        rows = [[cell.text.strip() for cell in row.cells] for row in table.rows]
+        headers = rows[0] if rows else []
+        for row_no, cells in enumerate(rows, start=1):
+            if not any(cells):
+                continue
+            if row_no == 1:
+                text = ' | '.join(cells)
+            else:
+                text = ' | '.join(
+                    f'{headers[index] if index < len(headers) and headers[index] else index + 1}: {value}'
+                    for index, value in enumerate(cells) if value)
+            chunks.append({'text': text, 'source': _source(
+                'word_table', f'表格 {table_no} · 第 {row_no} 列',
+                table=table_no, row=row_no, heading=heading)})
     if not chunks:
         raise ValueError('Word 文件沒有可擷取文字。')
     return chunks
@@ -139,14 +167,24 @@ def _extract_xlsx(path: Path) -> list[dict]:
     workbook = load_workbook(path, read_only=True, data_only=True)
     chunks = []
     for worksheet in workbook.worksheets:
+        headers: list[str] = []
         for row_no, row in enumerate(worksheet.iter_rows(values_only=True), start=1):
-            values = [str(value).strip() for value in row if value is not None and str(value).strip()]
-            if not values:
+            cells = [(index, str(value).strip()) for index, value in enumerate(row, start=1)
+                     if value is not None and str(value).strip()]
+            if not cells:
                 continue
-            last_column = max(1, len(row))
+            last_column = cells[-1][0]
             cell_range = f'A{row_no}:{_column_name(last_column)}{row_no}'
             locator = f'工作表 {worksheet.title} · {cell_range}'
-            chunks.append({'text': ' | '.join(values), 'source': _source(
+            values = [value for _, value in cells]
+            if not headers:
+                headers = [str(value).strip() if value is not None else '' for value in row]
+                text = ' | '.join(values)
+            else:
+                text = ' | '.join(
+                    f'{headers[index - 1] if index <= len(headers) and headers[index - 1] else _column_name(index)}: {value}'
+                    for index, value in cells)
+            chunks.append({'text': text, 'source': _source(
                 'excel_range', locator, sheet=worksheet.title, cell_range=cell_range)})
     workbook.close()
     if not chunks:
@@ -256,10 +294,11 @@ def query(document_id: str, question: str, limit: int = 3) -> dict:
     if not terms:
         return {'answer': '請輸入較具體的問題。', 'sources': []}
 
+    minimum_score = 2 if len(terms) >= 2 else 1
     ranked = []
     for chunk in document['chunks']:
         score = len(terms & _tokens(chunk['text']))
-        if score:
+        if score >= minimum_score:
             ranked.append((score, chunk))
     ranked.sort(key=lambda item: item[0], reverse=True)
     if not ranked:
@@ -275,15 +314,33 @@ def query(document_id: str, question: str, limit: int = 3) -> dict:
 
 
 def context(document_id: str, limit: int = 12) -> dict:
-    """Return bounded, source-bearing evidence for document-wide actions."""
+    """Return bounded, source-bearing evidence for document-wide actions.
+
+    A bounded context cannot be a complete reading of a long document.  Sample
+    across the document instead of silently treating its first pages as the
+    whole document, and expose the coverage to the caller/UI.
+    """
     document = _load(document_id)
     if document is None:
         return {'error': '找不到文件索引。'}
+    chunks = document['chunks']
+    if len(chunks) <= limit:
+        selected = chunks
+    else:
+        selected = [chunks[round(index * (len(chunks) - 1) / (limit - 1))]
+                    for index in range(limit)]
     sources = []
-    for chunk in document['chunks'][:limit]:
+    for chunk in selected:
         source = dict(chunk['source'])
         source['document_name'] = document['name']
         sources.append({'excerpt': chunk['text'], 'source': source})
     if not sources:
         return {'error': '文件沒有可用內容。'}
-    return {'sources': sources}
+    return {
+        'sources': sources,
+        'coverage': {
+            'included_chunks': len(sources),
+            'total_chunks': len(chunks),
+            'complete': len(sources) == len(chunks),
+        },
+    }

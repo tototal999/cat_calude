@@ -22,14 +22,14 @@ function escapeHtml(value) {
 }
 
 function showTab(t) {
-  document.getElementById('page-chat').classList.remove('active');
-  document.getElementById('page-schedule').classList.remove('active');
-  document.getElementById('page-documents').classList.remove('active');
+  document.querySelectorAll('.page').forEach(page => page.classList.remove('active'));
+  document.querySelectorAll('.nav-item-static').forEach(item => item.classList.remove('active'));
   document.getElementById('page-' + t).classList.add('active');
-  document.getElementById('nav-schedule').classList.toggle('active', t === 'schedule');
-  document.getElementById('nav-documents').classList.toggle('active', t === 'documents');
+  const nav = document.getElementById('nav-' + t);
+  if (nav) nav.classList.add('active');
   if (t === 'chat' && !_chatInited) initChat();
   if (t === 'documents') loadDocuments();
+  if (t === 'settings') loadToolboxSettings();
 }
 
 function chooseDocument() {
@@ -117,7 +117,14 @@ function renderDocumentResult(result) {
   const answer = document.getElementById('document-answer');
     if (result.error) { answer.textContent = result.error; return; }
     answer.innerHTML = `<p>${escapeHtml(result.answer)}</p>`;
-    result.sources.forEach(item => {
+    const coverage = result.coverage;
+    if (coverage && coverage.total_chunks && !coverage.complete) {
+      const note = document.createElement('p');
+      note.className = 'document-coverage-note';
+      note.textContent = `此結果抽樣涵蓋 ${coverage.included_chunks}/${coverage.total_chunks} 個文件區塊，非完整文件結論。`;
+      answer.appendChild(note);
+    }
+    (result.sources || []).forEach(item => {
       const source = item.source;
       const card = document.createElement('div');
       card.className = 'document-source';
@@ -211,7 +218,9 @@ function loadSession(id) {
       else if (msg.role === 'assistant') appendAssistantUI(msg.content);
     });
     updateEmptyState();
-    if (r.model) document.getElementById('model-select').value = r.model;
+    // Saved sessions contain a concrete model id, while this selector contains
+    // user-facing routing modes. Keep the current mode instead of blanking it.
+    pywebview.api.current_model_mode().then(mode => { document.getElementById('model-select').value = mode; });
     loadSessions(); // update active state
     scrollBottom();
   });
@@ -228,15 +237,15 @@ function newChat() {
 
 function initChat() {
   _chatInited = true;
-  pywebview.api.list_models().then(models => {
+  pywebview.api.list_model_modes().then(modes => {
     const sel = document.getElementById('model-select');
     sel.innerHTML = '';
-    models.forEach(m => {
+    modes.forEach(m => {
       const opt = document.createElement('option');
-      opt.value = m; opt.textContent = m;
+      opt.value = m.id; opt.textContent = m.label;
       sel.appendChild(opt);
     });
-    pywebview.api.current_model().then(cur => { sel.value = cur; });
+    pywebview.api.current_model_mode().then(cur => { sel.value = cur; });
   });
   
   loadSessions();
@@ -310,8 +319,10 @@ function onInputKey(e) {
 }
 
 function onModelChange() {
-  const m = document.getElementById('model-select').value;
-  pywebview.api.set_model(m);
+  const mode = document.getElementById('model-select').value;
+  pywebview.api.set_model_mode(mode).then(result => {
+    if (result.error) alert(result.error);
+  });
 }
 
 function openFile() {
@@ -559,6 +570,154 @@ function resetForm() {
   document.getElementById('f-title').value = '';
   document.getElementById('f-msg').innerText = '';
   _editingEnabled = true;
+}
+
+function runJsonTool(action) {
+  const input = document.getElementById('json-input').value;
+  const query = document.getElementById('json-search').value;
+  const status = document.getElementById('json-status');
+  status.textContent = '處理中…';
+  pywebview.api.json_tool(input, action, query).then(result => {
+    if (result.error) {
+      status.textContent = result.error;
+      if (typeof result.line === 'number') document.getElementById('json-input').focus();
+      return;
+    }
+    status.textContent = result.text || 'JSON 格式正確。';
+    if (action === 'format' || action === 'minify') document.getElementById('json-output').value = result.text;
+    if (result.data !== undefined) renderJsonTree(result.data, '$');
+    if (action === 'search') renderJsonMatches(result.matches || []);
+  }).catch(error => { status.textContent = 'JSON 工具失敗：' + error; });
+}
+
+function renderJsonMatches(matches) {
+  const container = document.getElementById('json-matches');
+  container.innerHTML = '';
+  if (!matches.length) { container.textContent = '沒有相符項目。'; return; }
+  matches.forEach(match => {
+    const button = document.createElement('button');
+    button.className = 'json-match';
+    button.textContent = `${match.path}  ·  ${match.preview}`;
+    button.onclick = () => { document.getElementById('json-path').textContent = match.path; };
+    container.appendChild(button);
+  });
+}
+
+function renderJsonTree(value, rootPath) {
+  const container = document.getElementById('json-tree');
+  container.innerHTML = '';
+  container.appendChild(jsonTreeNode(value, rootPath, 'root'));
+}
+
+function expandJsonTree() {
+  document.querySelectorAll('#json-tree details').forEach(node => { node.open = true; });
+}
+
+function collapseJsonTree() {
+  document.querySelectorAll('#json-tree details').forEach(node => { node.open = false; });
+}
+
+function jsonTreeNode(value, path, name) {
+  const scalar = value === null || typeof value !== 'object';
+  const label = document.createElement('span');
+  const valueType = value === null ? 'null' : (Array.isArray(value) ? 'array' : typeof value);
+  label.className = scalar ? `json-scalar json-${valueType}` : `json-key json-${valueType}`;
+  label.textContent = scalar ? `${name}: ${JSON.stringify(value)}` : `${name} ${Array.isArray(value) ? `[${value.length}]` : `{${Object.keys(value).length}}`}`;
+  label.onclick = () => { document.getElementById('json-path').textContent = path; };
+  if (scalar) return label;
+  const details = document.createElement('details');
+  details.open = path === '$';
+  const summary = document.createElement('summary');
+  summary.appendChild(label);
+  details.appendChild(summary);
+  const children = document.createElement('div');
+  children.className = 'json-children';
+  if (Array.isArray(value)) {
+    value.forEach((child, index) => children.appendChild(jsonTreeNode(child, `${path}[${index}]`, `[${index}]`)));
+  } else {
+    Object.keys(value).forEach(key => children.appendChild(jsonTreeNode(value[key], `${path}[${JSON.stringify(key)}]`, key)));
+  }
+  details.appendChild(children);
+  return details;
+}
+
+function copyText(value, status) {
+  if (!value) { if (status) status.textContent = '沒有可複製的內容。'; return; }
+  const fallback = () => {
+    const area = document.createElement('textarea');
+    area.value = value; document.body.appendChild(area); area.select();
+    document.execCommand('copy'); area.remove();
+  };
+  const copy = navigator.clipboard && navigator.clipboard.writeText ? navigator.clipboard.writeText(value) : Promise.resolve().then(fallback);
+  copy.then(() => { if (status) status.textContent = '已複製。'; }).catch(() => { fallback(); if (status) status.textContent = '已複製。'; });
+}
+
+function copyJsonResult() {
+  copyText(document.getElementById('json-output').value, document.getElementById('json-status'));
+}
+
+function translateText() {
+  const text = document.getElementById('translation-input').value;
+  const status = document.getElementById('translation-status');
+  status.textContent = '翻譯中…';
+  const options = {
+    target: document.getElementById('translation-target').value,
+    mode: document.getElementById('translation-mode').value,
+    preserve_code: document.getElementById('translation-code').checked,
+    preserve_tables: document.getElementById('translation-table').checked,
+    use_glossary: document.getElementById('translation-glossary').checked,
+  };
+  pywebview.api.translate_text(text, options).then(result => {
+    if (result.error) { status.textContent = result.error; return; }
+    document.getElementById('translation-output').value = result.content || '';
+    status.textContent = result.model ? `完成（${result.model}）` : '完成。';
+  }).catch(error => { status.textContent = '翻譯失敗：' + error; });
+}
+
+function copyTranslation() {
+  copyText(document.getElementById('translation-output').value, document.getElementById('translation-status'));
+}
+
+function loadToolboxSettings() {
+  pywebview.api.toolbox_settings().then(settings => {
+    document.getElementById('llm-provider').value = settings.provider || 'company';
+    document.getElementById('llm-base-url').value = settings.base_url || '';
+    document.getElementById('llm-model').value = settings.model || '';
+    document.getElementById('llm-timeout').value = settings.request_timeout || 120;
+    const modes = settings.model_modes || {}, tasks = settings.task_models || {};
+    ['fast', 'quality', 'code', 'translation'].forEach(key => { document.getElementById('mode-' + key).value = modes[key] || ''; });
+    ['chat', 'translation', 'document', 'code'].forEach(key => { document.getElementById('task-' + key).value = tasks[key] || ''; });
+    document.getElementById('task-error-analysis').value = tasks.error_analysis || '';
+  }).catch(error => { document.getElementById('settings-status').textContent = '無法讀取設定：' + error; });
+}
+
+function saveToolboxSettings() {
+  const payload = {
+    provider: document.getElementById('llm-provider').value,
+    base_url: document.getElementById('llm-base-url').value,
+    model: document.getElementById('llm-model').value,
+    model_modes: {}, task_models: {},
+  };
+  const timeout = document.getElementById('llm-timeout').value.trim();
+  if (timeout) payload.request_timeout = timeout;
+  ['fast', 'quality', 'code', 'translation'].forEach(key => { payload.model_modes[key] = document.getElementById('mode-' + key).value; });
+  ['chat', 'translation', 'document', 'code'].forEach(key => { payload.task_models[key] = document.getElementById('task-' + key).value; });
+  payload.task_models.error_analysis = document.getElementById('task-error-analysis').value;
+  const status = document.getElementById('settings-status');
+  status.textContent = '儲存中…';
+  pywebview.api.save_toolbox_settings(payload).then(result => {
+    if (result.error) { status.textContent = result.error; return; }
+    status.textContent = '已儲存。';
+    pywebview.api.current_model_mode().then(mode => { document.getElementById('model-select').value = mode; });
+  }).catch(error => { status.textContent = '儲存失敗：' + error; });
+}
+
+function runHealthCheck() {
+  const status = document.getElementById('settings-status');
+  status.textContent = '正在測試模型連線…';
+  pywebview.api.health_check().then(result => {
+    status.textContent = result.online ? `模型在線（${result.model || '預設模型'}）` : (result.error || '模型離線。');
+  }).catch(error => { status.textContent = '連線測試失敗：' + error; });
 }
 
 function useStarter(text) {
