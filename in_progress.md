@@ -15,8 +15,10 @@
 - 頂端模型選單改為一般使用者可理解的模式（自動、快速、高品質、程式分析、翻譯）；進階設定頁才可修改端點、模型、Timeout、模式與任務對應。
 - 新增任務模型路由：翻譯、文件、程式分析、錯誤分析與一般聊天可各自選模型，未設定時回退至模式對應或預設模型。
 - API Key 不由 UI 管理；仍由公司安裝程序或使用者執行期設定檔提供，避免以未加密的 UI 欄位保存憑證。
+- 桌寵右鍵選單已統一為快速提問、LLM 介面、文件助手、JSON 工具、翻譯、模型設定與排程的直接入口；Skin 與桌寵設定維持子選單，移除重複的 Plugins 選單。
+- 用量徽章同時顯示 Claude／Codex 時改為上下兩行，避免徽章過寬；Codex app-server 的安全錯誤訊息會直接顯示，便於判斷是否需要重新登入。
 - 修正第三輪審查：文件檢索改用 CJK 詞組與最低相關門檻；長文件摘要／比較改為跨全文抽樣並明示非完整涵蓋；Word 表格與 Excel 欄標題會隨證據保留。翻譯以佔位符實際鎖定程式碼／SQL／識別碼，模型未完整保留即回報錯誤。
-- 驗證：Python 3.11 `test_logic.py` **50/50** 通過（含本機 OpenAI-compatible 假端點、中文誤命中、抽樣涵蓋、sidecar 路由、JSON 深度、翻譯還原、weekly 非當日、disabled/delete 排程與 worker 分頁／截斷）；`node --check frontend/chat.js` 與 `git diff --check` 通過。翻譯／Health Check 的實際內網端點連線待使用者環境確認。文件助手已確認採公司內網 endpoint；不再將「完全離線推論」列為驗收阻塞。
+- 驗證：Python 3.11 `test_logic.py` **51/51** 通過（含本機 OpenAI-compatible 假端點、中文誤命中、抽樣涵蓋、sidecar 路由、JSON 深度、翻譯還原、weekly 非當日、disabled/delete 排程與 worker 分頁／截斷）；`node --check frontend/chat.js` 與 `git diff --check` 通過。翻譯／Health Check 的實際內網端點連線待使用者環境確認。文件助手已確認採公司內網 endpoint；不再將「完全離線推論」列為驗收阻塞。
 
 ### v6.2 尚待完成的實機項目
 
@@ -36,9 +38,9 @@
 ### 已實作的使用者功能
 
 - **用量驅動跑速**：0-25% 散步 → 25-50% 小跑 → 50-75% 快跑 → 75-95% 狂奔 → >95% 靜止
-- **用量徽章**：貓下方顯示 session% + weekly% + 重置時間，>90% 變紅警示
+- **用量徽章**：貓下方顯示 Claude／Codex 的 session% + weekly% + 重置時間；同時啟用時上下兩行呈現，>90% 變紅警示
 - **拖曳移動**：左鍵拖貓或徽章，位置於 Quit 時存入 config.json
-- **右鍵選單**：狀態行 / Refresh now / 排程... / 交談... / Skin / 設定（Always on top / Show usage % / 用量監控 / Face right / Size / Refresh 間隔） / Test / Show log / Quit
+- **右鍵選單**：狀態行 / 快速提問 / 交談（LLM 介面） / 文件助手 / JSON 工具 / 翻譯 / 模型設定 / 排程 / 切換 Skin / 寵物設定 / 測試 / 開啟記錄 / 結束
 - **皮膚系統**：skins/ 下每個子資料夾為一組皮膚（bluecat / cowcat / ragdollcat），右鍵即時切換
 - **多姿勢**：sleep / error / idle / run
 - **設定持久化**：skin / 大小 / 朝向 / 置頂 / 輪詢間隔 / 位置，存於 %LOCALAPPDATA%\ClaudeCat\config.json

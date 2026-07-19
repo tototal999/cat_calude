@@ -64,9 +64,10 @@ Claude／Codex limits 與聊天／文件助手完全獨立，預設 OFF。兩者
 - [x] P7-3. 模型模式：一般 UI 顯示自動／快速／高品質／程式分析／翻譯，不直接曝露模型 ID。（2026-07-19）
 - [x] P7-4. 任務模型路由：聊天、翻譯、文件、程式分析、錯誤分析可各自指定模型，未設定時安全退回預設模型。（2026-07-19）
 - [x] P7-5. 進階模型設定與健康檢查：Provider、端點、預設模型、逾時、模式／任務對應；API Key 維持由安裝／執行期設定提供，不在 UI 編輯。（2026-07-19）
+- [x] P7-6. 統一桌寵右鍵入口：快速提問、LLM 介面、文件助手、JSON 工具、翻譯、模型設定與排程皆可直接開啟；Skin 與桌寵設定保留子選單，移除重複的 Plugins 選單。（2026-07-19）
 - [x] P7-A1. JSON 工具在 LLM 離線時完全可用；非法 JSON 顯示正確行、欄，並限制輸入大小／深度／節點數。（2026-07-19：確定性單元測試）
 - [o] P7-A2. 翻譯與健康檢查錯誤直接顯示；程式碼／SQL／JSON Key／API path／檔名／錯誤碼以佔位符實際鎖定並驗證還原；待使用者內網端點實機確認。（2026-07-19）
-- [x] P7-A3. 路由、設定 merge、sidecar 模型覆寫、本機 OpenAI-compatible 假端點與 worker／排程反例均有回歸測試。（2026-07-19：Python 3.11 `test_logic.py` 50/50、`node --check frontend/chat.js`、`git diff --check`）
+- [x] P7-A3. 路由、設定 merge、sidecar 模型覆寫、本機 OpenAI-compatible 假端點與 worker／排程反例均有回歸測試。（2026-07-19：Python 3.11 `test_logic.py` 51/51、`node --check frontend/chat.js`、`git diff --check`）
 - [x] P7-A4. 已於第三輪修正後重新打包 `ClaudeCat.exe` 並執行啟動煙霧測試；啟動 5 秒仍存活，且 `verify_packaged_documents.py` 驗證 PDF／DOCX／PPTX／XLSX 索引與來源定位通過。（2026-07-19）
 
 ### 已知後續風險（不得宣稱已完成）

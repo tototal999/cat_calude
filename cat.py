@@ -58,7 +58,6 @@ from backend.services import local_llm
 from backend.services import codex_limits
 from backend.services.tray_service import TrayService
 from pet.state_machine import PetState, PetStateMachine
-from plugins import builtin as builtin_plugins
 import scheduler as scheduler_mod
 import spritecat
 import winalpha
@@ -247,7 +246,8 @@ class ClaudeCat:
         self.badge_win.overrideredirect(True)
         self.badge_win.wm_attributes('-topmost', True)
         self.badge = tk.Label(self.badge_win, text='...', bg='#222222',
-                              fg='#ffffff', font=('Segoe UI', 9, 'bold'), padx=4)
+                              fg='#ffffff', font=('Segoe UI', 9, 'bold'), padx=4,
+                              pady=1, justify='center', anchor='center')
         self.badge.pack()
         self._last_badge_state: tuple[str, str, str] | None = None
         self._place_badge()
@@ -527,34 +527,31 @@ class ClaudeCat:
         m = tk.Menu(self.root, tearoff=0)
         m.add_command(label=self._status_text(), state='disabled')
         m.add_separator()
-        m.add_command(label='排程...', command=self._open_schedule)
-        m.add_command(label='交談...', command=self._open_chat)
+        m.add_command(label='快速提問...', command=self._open_quick_question)
+        m.add_command(label='交談（LLM 介面）...', command=self._open_chat)
         m.add_command(label='文件助手...', command=self._open_documents)
-
-        plugin_menu = tk.Menu(m, tearoff=0)
-        for action in builtin_plugins.actions():
-            plugin_menu.add_command(label=action.label,
-                                    command=lambda action_id=action.action_id:
-                                    self._run_plugin_action(action_id))
-        m.add_cascade(label='Plugins', menu=plugin_menu)
+        m.add_command(label='JSON 工具...', command=self._open_json)
+        m.add_command(label='翻譯...', command=self._open_translation)
+        m.add_command(label='模型設定...', command=self._open_settings)
+        m.add_command(label='排程...', command=self._open_schedule)
 
         skin_menu = tk.Menu(m, tearoff=0)
         for name in spritecat.list_skins():
             skin_menu.add_radiobutton(label=name, variable=self.current_skin,
                                       value=name, command=self._apply_look)
-        m.add_cascade(label='Skin', menu=skin_menu)
+        m.add_cascade(label='切換 Skin', menu=skin_menu)
 
-        m.add_cascade(label='設定', menu=self._build_settings_menu(m))
+        m.add_cascade(label='寵物設定', menu=self._build_settings_menu(m))
 
         test_menu = tk.Menu(m, tearoff=0)
         test_menu.add_radiobutton(label='Live (normal)', variable=self.debug_state, value='live')
         test_menu.add_radiobutton(label='Force error', variable=self.debug_state, value='error')
         test_menu.add_radiobutton(label='Force 100% (exhausted)', variable=self.debug_state, value='full')
-        m.add_cascade(label='Test', menu=test_menu)
+        m.add_cascade(label='測試', menu=test_menu)
 
         m.add_separator()
-        m.add_command(label='Show log', command=self._show_log)
-        m.add_command(label='Quit', command=self._quit)
+        m.add_command(label='開啟記錄', command=self._show_log)
+        m.add_command(label='結束', command=self._quit)
         m.tk_popup(e.x_root, e.y_root)
 
     def _build_settings_menu(self, parent: tk.Menu) -> tk.Menu:
@@ -607,6 +604,18 @@ class ClaudeCat:
     def _open_documents(self) -> None:
         import backend.window_main as chatwin
         chatwin.request_open('documents')
+
+    def _open_json(self) -> None:
+        import backend.window_main as chatwin
+        chatwin.request_open('json')
+
+    def _open_translation(self) -> None:
+        import backend.window_main as chatwin
+        chatwin.request_open('translate')
+
+    def _open_settings(self) -> None:
+        import backend.window_main as chatwin
+        chatwin.request_open('settings')
 
     def _run_plugin_action(self, action_id: str) -> None:
         """Dispatch only declared built-in actions; plugins cannot run code."""
@@ -921,14 +930,29 @@ class ClaudeCat:
         elif usage is None:
             state = ('...', '#222222', '#ffffff')
         else:
-            text = f' {usage:.0f}%'
-            if self.weekly_pct is not None:
-                text += f' W{self.weekly_pct:.0f}%'
-            reset = self._to_local_hhmm(self.resets_at)
-            text += f' | {reset} ' if reset else ' '
-            # Red warning when either quota is nearly gone - the weekly cap
-            # is often what actually locks you out, not the 5h session.
-            hot = usage > 90 or (self.weekly_pct or 0) > 90
+            parts = []
+            hot = False
+            if self.monitor_enabled.get() and self.usage_pct is not None:
+                item = f'Claude {self.usage_pct:.0f}%'
+                if self.weekly_pct is not None:
+                    item += f' W{self.weekly_pct:.0f}%'
+                reset = self._to_local_hhmm(self.resets_at)
+                if reset:
+                    item += f' @{reset}'
+                parts.append(item)
+                hot = hot or self.usage_pct > 90 or (self.weekly_pct or 0) > 90
+            if self.codex_limits_enabled.get() and self.codex_usage_pct is not None:
+                item = f'Codex {self.codex_usage_pct:.0f}%'
+                if self.codex_weekly_pct is not None:
+                    item += f' W{self.codex_weekly_pct:.0f}%'
+                reset = self._to_local_hhmm(self.codex_resets_at)
+                if reset:
+                    item += f' @{reset}'
+                parts.append(item)
+                hot = hot or self.codex_usage_pct > 90 or (self.codex_weekly_pct or 0) > 90
+            # Keep each provider on its own line.  This avoids an overly wide
+            # label below the pet when both Claude and Codex usage are shown.
+            text = '\n'.join(parts)
             state = (text, '#3a1111', '#ff4444') if hot \
                 else (text, '#222222', '#ffffff')
         # Reposition/reconfigure only on real change - this runs every

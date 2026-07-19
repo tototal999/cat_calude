@@ -56,8 +56,12 @@ def fetch_usage() -> dict[str, Any]:
             'weekly_resets_at': _unix_to_iso(secondary.get('resetsAt')),
             'plan': limits.get('planType'),
         }
-    except (OSError, TimeoutError, ValueError, json.JSONDecodeError):
-        return {'error': 'Codex 用量暫時無法讀取；請確認 Codex Desktop 已登入。'}
+    except (OSError, TimeoutError, ValueError, json.JSONDecodeError) as exc:
+        detail = str(exc).strip()
+        message = 'Codex 用量暫時無法讀取。'
+        if detail:
+            message += f' {detail}'
+        return {'error': message}
 
 
 def _request_rate_limits(executable: Path) -> dict[str, Any]:
@@ -84,7 +88,7 @@ def _request_rate_limits(executable: Path) -> dict[str, Any]:
         _send(process, 2, 'account/rateLimits/read', None)
         result = _receive(lines, 2)
         if 'error' in result:
-            raise ValueError('Codex app-server rejected rate limits request')
+            raise ValueError(_rpc_error_message(result['error']))
         payload = result.get('result')
         if not isinstance(payload, dict):
             raise ValueError('Codex app-server returned an invalid payload')
@@ -120,6 +124,20 @@ def _receive(lines: queue.Queue[str | None], request_id: int) -> dict[str, Any]:
         if message.get('id') == request_id:
             return message
     raise ValueError('Codex app-server did not return the requested response')
+
+
+def _rpc_error_message(error: Any) -> str:
+    """Return the JSON-RPC server's safe diagnostic without exposing secrets."""
+    if isinstance(error, dict):
+        message = str(error.get('message') or '').strip()
+        code = error.get('code')
+        if message and code is not None:
+            return f'Codex app-server 拒絕用量請求（{code}）：{message}'
+        if message:
+            return f'Codex app-server 拒絕用量請求：{message}'
+        if code is not None:
+            return f'Codex app-server 拒絕用量請求（{code}）。'
+    return 'Codex app-server 拒絕用量請求。'
 
 
 def _number_or_none(value: Any) -> float | None:

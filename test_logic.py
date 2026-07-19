@@ -260,6 +260,13 @@ class CodexLimitsTests(unittest.TestCase):
             codex_limits._unix_to_iso(1_700_000_000),
         )
 
+    def test_rpc_error_keeps_safe_server_diagnostic(self):
+        message = codex_limits._rpc_error_message({
+            'code': -32601, 'message': 'Method not found',
+        })
+        self.assertIn('-32601', message)
+        self.assertIn('Method not found', message)
+
 
 class JsonToolTests(unittest.TestCase):
     def test_format_preserves_object_key_order_without_llm(self):

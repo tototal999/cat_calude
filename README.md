@@ -1,13 +1,32 @@
-# ClaudeCat v2
+# ClaudeCat
 
-> 規劃中的 v6.1 會將產品定位擴充為「桌面寵物 + 本機文件助手」：文件與量化模型均留在本機；Claude／Codex limits 為獨立可選監控。完整 MVP 規格見 [local-document-assistant-mvp.md](local-document-assistant-mvp.md)。
+> v6.1 已將產品定位擴充為「桌面寵物 + 本機文件助手」：文件與索引均留在本機；Claude／Codex limits 為獨立可選監控。完整 MVP 規格見 [local-document-assistant-mvp.md](local-document-assistant-mvp.md)。
+> v6.2 再擴充為「桌面 AI 工具箱」，加入 JSON 工具與翻譯分頁，規格見 [desktop-ai-toolbox-mvp.md](desktop-ai-toolbox-mvp.md)。
 
 桌面藍貓寵物與公司內網 Qwen 文件助手。一般聊天與文件問答只使用設定於 `llm.base_url` 的公司內網 Qwen endpoint，不依賴 Claude 或 Codex。Claude／Codex limits 是獨立可選監控，預設 OFF。
-v2 導入 Open WebUI 風格的聊天介面、歷史對話持久化（Sessions）、前後端分離架構，以及可攜式的 Windows EXE 打包修復。
+專案導入 Open WebUI 風格的聊天介面、歷史對話持久化（Sessions）、前後端分離架構，以及可攜式的 Windows EXE 打包修復。
 
 ## 需求
 - Windows 10/11、Python 3.10+（含 tkinter，官方安裝包預設就有）
-- `pip install requests Pillow pandas openpyxl python-pptx pywebview` (`pandas`, `openpyxl`, `python-pptx` 為交談與轉檔功能所需)
+- 必要套件：
+
+  ```bash
+  pip install requests Pillow pywebview pystray openpyxl xlrd python-pptx python-docx pypdf
+  ```
+
+  | 套件 | 用途 |
+  |---|---|
+  | `requests` | 用量 API 與 LLM 呼叫 |
+  | `Pillow` | 精靈圖縮放、系統匣圖示 |
+  | `pywebview` | 交談／文件／工具視窗 |
+  | `pystray` | Windows 系統匣 |
+  | `openpyxl`／`xlrd` | XLSX／舊版 XLS 解析 |
+  | `python-pptx` | PPTX 解析與匯出 |
+  | `python-docx` | DOCX 解析 |
+  | `pypdf` | PDF 解析與頁碼定位 |
+
+  選用：`markitdown`（文件轉 Markdown，未安裝時退回原生解析）。
+  **不需要 `pandas`／`numpy`**——v6.1 起 Excel 已改用 `openpyxl`／`xlrd`，打包體積因此縮減。
 - 公司內網 Qwen endpoint 設定於 `%LOCALAPPDATA%\ClaudeCat\config.json`；聊天與文件功能不需要 Claude Code、Codex、Ollama 或其登入憑證。
 
 ## 執行
@@ -16,15 +35,43 @@ python cat.py
 ```
 - 左鍵拖曳移動（貓或 % 徽章皆可）
 - 單擊貓：開啟貼在貓旁的「問我一句」泡泡，Enter 後直接取得公司內網 Qwen 回答，不開完整聊天視窗。
-- 右鍵選單：包含「交談...」、「排程...」、內建 Plugins 等功能，可開啟現代化 WebView 聊天介面。
+- 右鍵選單：直接提供「快速提問」、「交談（LLM 介面）」、「文件助手」、「JSON 工具」、「翻譯」、「模型設定」與「排程」；也可切換 Skin 與調整桌寵設定。
 - Windows 系統匣：可顯示／隱藏桌寵、快速提問、開啟文件助手或結束程式。
-- 貓以本機互動、排程與閒置狀態呈現動畫；Claude／Codex limits 都是可選功能，首次啟用須由每位使用者在自己的電腦同意。未安裝或未登入兩者時，徽章顯示 `No use`，不會查詢。Codex 透過本機 app-server 讀取用量，屬非官方相容方式，可能隨 Codex 更新失效。
+- 貓以本機互動、排程與閒置狀態呈現動畫；Claude／Codex limits 都是可選功能，首次啟用須由每位使用者在自己的電腦同意。未安裝或未登入兩者時，徽章顯示 `No use`，不會查詢；同時顯示兩者時，徽章以 Claude／Codex 上下兩行呈現。Codex 透過本機 app-server 讀取用量，屬非官方相容方式，可能隨 Codex 更新失效。
 
-## 🌟 最新功能 (v6.0)
+## 🌟 最新功能 (v6.2 桌面 AI 工具箱)
+
+### 1. JSON 工具分頁
+
+Format、Minify、Validate、搜尋、Copy、Tree View 與 JSONPath。
+**全部由本機確定性程式處理，完全不呼叫 LLM**，所以 endpoint 離線時照樣可用。
+非法 JSON 會直接指出錯誤的行與欄；輸入大小、巢狀深度與節點數皆有上限保護。
+
+### 2. 英／繁中翻譯分頁
+
+支援一般、技術、商務、中英對照四種語氣。
+程式碼、SQL、JSON Key、API path、檔名與錯誤碼會先以佔位符鎖定再送出，
+還原時逐一比對；模型若未完整保留這些內容，會直接回報錯誤而非默默吐出壞結果。
+術語表存在本機。
+
+### 3. 模型模式與任務路由
+
+- 頂端模型選單改為一般使用者可理解的**模式**：自動、快速、高品質、程式分析、翻譯，
+  不直接曝露模型 ID。端點、模型、Timeout 與模式對應只在「進階設定」頁修改。
+- **任務模型路由**：翻譯、文件、程式分析、錯誤分析與一般聊天可各自指定模型；
+  未設定時回退至模式對應，再退回預設模型。
+- 進階設定頁提供 Health Check。目前只驗證聊天模型，其餘任務路由待逐一驗證。
+
+> **API Key 不由 UI 管理。** 憑證僅由公司安裝程序或使用者的執行期 `config.json` 提供，
+> 避免以未加密的 UI 欄位保存。詳見下方「LLM 交談設定」。
+
+---
+
+## v6.0 功能（沿用至今）
 
 ### 1. 現代化 Web 聊天介面 (Chatbot-UI Style)
-透過點擊右鍵「交談...」，將開啟一個極具現代感的雙欄式聊天視窗：
-- **深色主題 (Dark Mode)**：比照業界標準，採用 `#343541` 專業深色介面。
+透過點擊右鍵「交談（LLM 介面）...」，將開啟一個極具現代感的雙欄式聊天視窗：
+- **深色主題 (Dark Mode)**：極深灰配色，底色 `#101112`、面板 `#171819`、強調色 `#4f8cff`（定義於 `frontend/style.css` 的 `:root`）。
 - **對話持久化 (Sessions)**：左側邊欄會自動列出過去的對話歷史，關閉視窗不再遺失對話。所有對話均以 JSON 格式安全地儲存在 `%LOCALAPPDATA%\ClaudeCat\sessions\` 中。
 - **Markdown 與程式碼複製**：離線版不載入語法高亮套件；所有程式碼區塊右上角仍有獨立的「📋 Copy Code」按鈕。
 - **快捷指令 (Slash Commands)**：在輸入框輸入 `/` 即可呼叫快速提示詞選單。
@@ -39,29 +86,43 @@ python cat.py
 ## 疑難排解：徽章顯示 `!`
 
 代表這輪輪詢抓用量失敗。**右鍵點貓 → 選單最上面那行（灰色不可點）** 會顯示確切原因。
-完整歷史記錄看 log：**右鍵 → Show log**。檔案在 `%LOCALAPPDATA%\ClaudeCat\claudecat.log`。
+完整歷史記錄看 log：**右鍵 → 開啟記錄**。檔案在 `%LOCALAPPDATA%\ClaudeCat\claudecat.log`。
 
 ## 架構
 ```
 claude-cat/
 ├── backend/
-│   ├── models/            # 資料結構與驗證
-│   ├── prompts/           # system.txt (貓咪人設)
-│   ├── routes/            # api.py (JsApi 橋接)
-│   ├── services/          # llm_service.py, scheduler.py (核心業務)
-│   └── window_main.py     # Pywebview 視窗管理
+│   ├── prompts/
+│   │   └── system.txt              # 貓咪人設 system prompt
+│   ├── routes/
+│   │   └── api.py                  # JsApi 橋接
+│   ├── services/
+│   │   ├── llm_service.py          # LLM 客戶端與任務模型路由
+│   │   ├── document_service.py     # 文件索引、切塊、檢索與來源定位
+│   │   ├── json_tools.py           # JSON 工具（本機確定性處理，不呼叫 LLM）
+│   │   ├── translation_service.py  # 翻譯與佔位符保護／還原驗證
+│   │   ├── tray_service.py         # Windows 系統匣
+│   │   ├── local_llm.py            # llama-server sidecar 生命週期管理
+│   │   └── codex_limits.py         # Codex 用量（非官方 app-server 讀取）
+│   └── window_main.py              # Pywebview 視窗管理
 ├── config/
-│   └── settings.py        # 全域設定與 Config 讀取
+│   └── settings.py                 # 全域設定與 Config 讀取
 ├── frontend/
-│   ├── chat.js            # 聊天介面邏輯 (包含 Slash commands, Sessions)
-│   ├── index.html         # 雙欄式 Chatbot-UI 佈局
-│   └── style.css          # 深色主題與動畫樣式
-├── cat.py                 # 🐾 主程式：桌面寵物入口
-├── worker.py              # 資料解析與 PPTX 背景工作程序 (避免卡死主線程)
-├── api.py                 # usage-monitor-for-claude (MIT)
-├── spritecat.py           # 精靈圖載入：去白背景、縮放、皮膚切換
-├── winalpha.py            # UpdateLayeredWindow 逐像素 alpha 渲染
-└── skins/                 # 皮膚資料夾 (支援動態抽換)
+│   ├── chat.js                     # 前端邏輯 (Slash commands, Sessions, 工具分頁)
+│   ├── index.html                  # 雙欄式 Chatbot-UI 佈局
+│   └── style.css                   # 深色主題與動畫樣式
+├── pet/
+│   └── state_machine.py            # PetState 狀態機
+├── plugins/
+│   └── builtin.py                  # 內建 plugin（僅限固定白名單事件）
+├── cat.py                          # 🐾 主程式：桌面寵物入口
+├── scheduler.py                    # 排程引擎（daily / weekly / hourly）
+├── worker.py                       # 資料解析與 PPTX 背景工作程序 (避免卡死主線程)
+├── api.py                          # usage-monitor-for-claude (MIT)
+├── spritecat.py                    # 精靈圖載入：去白背景、縮放、皮膚切換
+├── winalpha.py                     # UpdateLayeredWindow 逐像素 alpha 渲染
+├── vectorcat.py                    # 向量貓（已改用精靈圖，保留備援）
+└── skins/                          # 皮膚資料夾 (支援動態抽換)
 ```
 
 ## 打包成 EXE
@@ -85,6 +146,10 @@ pyinstaller ClaudeCat.spec --clean -y
   }
 }
 ```
+
+**API Key 不在 UI 編輯**：`api_key` 只能由公司安裝程序或使用者手動寫入這份執行期
+`config.json`。程式不提供輸入憑證的 UI 欄位，避免以未加密形式保存。內網端點若不需要
+驗證，留空字串即可。
 
 ### 離線本機模型（v6.1）
 
