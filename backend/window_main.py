@@ -55,7 +55,8 @@ def init(scheduler, on_chat_open=None, on_chat_close=None) -> None:
     _scheduler = scheduler
     _on_chat_open = on_chat_open
     _on_chat_close = on_chat_close
-    _current_model = llm.current_model()
+    models = llm.list_models()
+    _current_model = models[0] if models else llm.current_model()
 
 
 def _build_system_prompt() -> str:
@@ -170,6 +171,15 @@ def _on_closing():
     return False
 
 
+def _show_in_taskbar(window) -> None:
+    """Keep the native tool window reachable from the Windows taskbar."""
+    native = getattr(window, 'native', None)
+    if native is None:
+        logger.warning('tool window native handle is unavailable before show')
+        return
+    native.ShowInTaskbar = True
+
+
 def serve_main_thread() -> None:
     """Park the main thread; on first open request, create the window and
     enter the webview GUI loop. Returns only when the app is quitting."""
@@ -181,6 +191,7 @@ def serve_main_thread() -> None:
     _window = webview.create_window(
         'ClaudeCat', str(HTML_PATH), js_api=JsApi(),
         width=560, height=560)
+    _window.events.before_show += _show_in_taskbar
     _window.events.closing += _on_closing
     _icon = str(ICON_PATH) if ICON_PATH.exists() else None
     webview.start(icon=_icon)

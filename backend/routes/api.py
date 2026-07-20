@@ -71,8 +71,12 @@ class JsApi:
         return wm._current_model or llm.current_model()
 
     def set_model(self, model):
-        wm._current_model = model
-        llm.save_config_model(model)
+        try:
+            llm.save_config_model(model)
+            wm._current_model = model
+            return {'model': model}
+        except (OSError, RuntimeError, ValueError) as exc:
+            return {'error': str(exc)}
 
     def list_model_modes(self):
         return llm.list_model_modes()
@@ -94,17 +98,19 @@ class JsApi:
     def save_toolbox_settings(self, values):
         try:
             result = llm.save_toolbox_settings(values)
-            wm._current_model = llm.current_model()
+            models = llm.list_models()
+            wm._current_model = models[0] if models else llm.current_model()
             return result
         except ValueError as exc:
             return {'error': str(exc)}
 
     def health_check(self):
-        error = llm.probe()
+        model = wm._current_model or llm.current_model()
+        error = llm.probe(model=model)
         return {
             'error': error,
             'online': error is None,
-            'model': llm.model_for_task('chat'),
+            'model': model,
         }
 
     # ---- Desktop AI toolbox (v6.2) ----
@@ -390,7 +396,7 @@ class JsApi:
         messages.extend(window)
         messages.append({'role': 'user', 'content': prompt_text})
 
-        result = llm.chat(messages, model=llm.model_for_task('chat', wm._current_model), timeout=180)
+        result = llm.chat(messages, model=wm._current_model, timeout=180)
 
         degraded = None
         if truncated:
@@ -402,7 +408,7 @@ class JsApi:
             messages = [{'role': 'system', 'content': sys_prompt}]
             messages.extend(window)
             messages.append({'role': 'user', 'content': prompt_text})
-            result = llm.chat(messages, model=llm.model_for_task('chat', wm._current_model), timeout=180)
+            result = llm.chat(messages, model=wm._current_model, timeout=180)
             if result.get('error'):
                 return result
             degraded = '內容過長，已縮短貓的記憶重試'

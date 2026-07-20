@@ -116,6 +116,30 @@ def _setup_logging() -> logging.Logger:
 logger = _setup_logging()
 
 
+def _clear_log_files(log: logging.Logger, log_file: Path) -> None:
+    """Clear the active rotating log and its backups without closing it."""
+    rotating_handler = next(
+        (handler for handler in log.handlers
+         if isinstance(handler, logging.handlers.RotatingFileHandler)
+         and Path(handler.baseFilename) == log_file.resolve()),
+        None,
+    )
+    if rotating_handler is None:
+        log_file.write_text('', encoding='utf-8')
+        return
+
+    rotating_handler.acquire()
+    try:
+        rotating_handler.flush()
+        rotating_handler.stream.seek(0)
+        rotating_handler.stream.truncate()
+        rotating_handler.stream.seek(0, os.SEEK_END)
+        for index in range(1, rotating_handler.backupCount + 1):
+            Path(f'{log_file}.{index}').unlink(missing_ok=True)
+    finally:
+        rotating_handler.release()
+
+
 
 
 # usage % (upper bound, inclusive) -> frame interval in ms; None = frozen
@@ -580,6 +604,7 @@ class ClaudeCat:
 
         m.add_separator()
         m.add_command(label='開啟記錄', command=self._show_log)
+        m.add_command(label='清除記錄...', command=self._clear_log)
         m.add_command(label='結束', command=self._quit)
         m.tk_popup(e.x_root, e.y_root)
 
@@ -619,6 +644,10 @@ class ClaudeCat:
         else:
             self.badge_win.withdraw()
         self._save_config()
+
+    def _usage_badge_enabled(self) -> bool:
+        return self.show_pct.get() and (
+            self.monitor_enabled.get() or self.codex_limits_enabled.get())
 
     # ---- Schedule + monitor toggle (Part 1) --------------------------------
 
@@ -689,9 +718,11 @@ class ClaudeCat:
     def _show_cat(self) -> None:
         self.root.deiconify()
         self.root.lift()
-        if self.show_pct.get():
+        if self._usage_badge_enabled():
             self.badge_win.deiconify()
             self._place_badge()
+        else:
+            self.badge_win.withdraw()
 
     def _hide_cat(self) -> None:
         self.root.withdraw()
@@ -890,6 +921,20 @@ class ClaudeCat:
         text.pack(fill='both', expand=True)
         text.see('end')
 
+    def _clear_log(self) -> None:
+        if not messagebox.askyesno(
+                '清除記錄',
+                '確定要清除目前及輪替的 ClaudeCat 記錄嗎？',
+                parent=self.root):
+            return
+        try:
+            _clear_log_files(logger, LOG_FILE)
+        except OSError as exc:
+            messagebox.showerror(
+                '清除記錄失敗', f'無法清除記錄：{exc}', parent=self.root)
+            return
+        messagebox.showinfo('清除記錄', '記錄已清除。', parent=self.root)
+
     def _effective_error(self) -> str | None:
         """Real error, or a debug-menu override for previewing that state."""
         if self.debug_state.get() == 'error':
@@ -949,15 +994,13 @@ class ClaudeCat:
             return None
 
     def _update_badge(self) -> None:
-        if not self.show_pct.get():
+        if not self._usage_badge_enabled():
             self.badge_win.withdraw()
             return
         error = self._effective_error()
         usage = self._effective_usage()
         if not self.claude_limits_available and not self.codex_limits_available:
             state = (' No use ', '#222222', '#888888')
-        elif not self._monitor_active():
-            state = (' OFF ', '#222222', '#888888')
         elif error:
             state = (' ! ', '#aa2222', '#ffffff')
         elif usage is None:

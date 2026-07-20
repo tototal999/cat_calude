@@ -360,9 +360,7 @@ function loadSession(id) {
       else if (msg.role === 'assistant') appendAssistantUI(msg.content);
     });
     updateEmptyState();
-    // Saved sessions contain a concrete model id, while this selector contains
-    // user-facing routing modes. Keep the current mode instead of blanking it.
-    pywebview.api.current_model_mode().then(mode => { document.getElementById('model-select').value = mode; });
+    loadModelChoices(r.model);
     loadSessions(); // update active state
     scrollBottom();
   });
@@ -379,16 +377,7 @@ function newChat() {
 
 function initChat() {
   _chatInited = true;
-  pywebview.api.list_model_modes().then(modes => {
-    const sel = document.getElementById('model-select');
-    sel.innerHTML = '';
-    modes.forEach(m => {
-      const opt = document.createElement('option');
-      opt.value = m.id; opt.textContent = m.label;
-      sel.appendChild(opt);
-    });
-    pywebview.api.current_model_mode().then(cur => { sel.value = cur; });
-  });
+  loadModelChoices();
   
   loadSessions();
   
@@ -396,6 +385,39 @@ function initChat() {
   ta.addEventListener('compositionstart', () => { _composing = true; });
   ta.addEventListener('compositionend', () => { _composing = false; });
   ta.addEventListener('input', () => autoResize(ta));
+}
+
+function loadModelChoices(preferredModel) {
+  const current = preferredModel
+    ? Promise.resolve(preferredModel)
+    : pywebview.api.current_model();
+  return Promise.all([pywebview.api.list_models(), current]).then(([models, selected]) => {
+    const sel = document.getElementById('model-select');
+    sel.innerHTML = '';
+    const choices = [...new Set(models || [])];
+    if (selected && !choices.includes(selected)) choices.unshift(selected);
+    if (choices.length === 0) {
+      const opt = document.createElement('option');
+      opt.value = '';
+      opt.textContent = '尚未設定模型';
+      sel.appendChild(opt);
+      sel.disabled = true;
+      return;
+    }
+    sel.disabled = false;
+    choices.forEach(model => {
+      const opt = document.createElement('option');
+      opt.value = model;
+      opt.textContent = model;
+      sel.appendChild(opt);
+    });
+    sel.value = selected && choices.includes(selected) ? selected : choices[0];
+  }).catch(error => {
+    const sel = document.getElementById('model-select');
+    sel.innerHTML = '<option value="">模型清單載入失敗</option>';
+    sel.disabled = true;
+    alert('無法載入模型清單：' + error);
+  });
 }
 
 function autoResize(ta) {
@@ -461,9 +483,15 @@ function onInputKey(e) {
 }
 
 function onModelChange() {
-  const mode = document.getElementById('model-select').value;
-  pywebview.api.set_model_mode(mode).then(result => {
-    if (result.error) alert(result.error);
+  const model = document.getElementById('model-select').value;
+  if (!model) return;
+  pywebview.api.set_model(model).then(result => {
+    if (result.error) {
+      alert(result.error);
+      loadModelChoices();
+      return;
+    }
+    loadModelChoices(result.model);
   });
 }
 
@@ -801,9 +829,16 @@ function copyJsonResult() {
 function translateText() {
   const text = document.getElementById('translation-input').value;
   const status = document.getElementById('translation-status');
+  const source = document.getElementById('translation-source').value;
+  const target = document.getElementById('translation-target').value;
+  if (source !== 'auto' && source === target) {
+    status.textContent = '來源語言與目標語言不可相同。';
+    return;
+  }
   status.textContent = '翻譯中…';
   const options = {
-    target: document.getElementById('translation-target').value,
+    source: source,
+    target: target,
     mode: document.getElementById('translation-mode').value,
     preserve_code: document.getElementById('translation-code').checked,
     preserve_tables: document.getElementById('translation-table').checked,
@@ -814,6 +849,25 @@ function translateText() {
     document.getElementById('translation-output').value = result.content || '';
     status.textContent = result.model ? `完成（${result.model}）` : '完成。';
   }).catch(error => { status.textContent = '翻譯失敗：' + error; });
+}
+
+function swapTranslationLanguages() {
+  const source = document.getElementById('translation-source');
+  const target = document.getElementById('translation-target');
+  const oldSource = source.value;
+  const oldTarget = target.value;
+  source.value = oldTarget;
+  target.value = oldSource === 'auto'
+    ? (oldTarget === 'en' ? 'zh-TW' : 'en')
+    : oldSource;
+
+  const input = document.getElementById('translation-input');
+  const output = document.getElementById('translation-output');
+  if (output.value) {
+    input.value = output.value;
+    output.value = '';
+  }
+  document.getElementById('translation-status').textContent = '';
 }
 
 function copyTranslation() {
@@ -850,7 +904,7 @@ function saveToolboxSettings() {
   pywebview.api.save_toolbox_settings(payload).then(result => {
     if (result.error) { status.textContent = result.error; return; }
     status.textContent = '已儲存。';
-    pywebview.api.current_model_mode().then(mode => { document.getElementById('model-select').value = mode; });
+    loadModelChoices(result.model);
   }).catch(error => { status.textContent = '儲存失敗：' + error; });
 }
 

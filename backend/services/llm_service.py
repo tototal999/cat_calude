@@ -99,12 +99,18 @@ def _export_dir() -> Path:
 def save_config_model(model: str) -> None:
     """Persist the selected model back to config.json ``llm.model``."""
     if not _config_file:
-        return
-    try:
-        settings.merge_config({'llm': {'model': model}})
-        _config['model'] = model
-    except OSError:
-        logger.exception('could not save llm.model to config')
+        raise RuntimeError('LLM 設定尚未初始化。')
+    model = str(model or '').strip()
+    models = list_models()
+    if model not in models:
+        raise ValueError('選擇的模型不在可用清單中。')
+    fallbacks = [item for item in models if item != model]
+    settings.merge_config({'llm': {
+        'model': model,
+        'fallback_models': fallbacks,
+    }})
+    _config['model'] = model
+    _config['fallback_models'] = fallbacks
 
 
 # ---- Public API -----------------------------------------------------------

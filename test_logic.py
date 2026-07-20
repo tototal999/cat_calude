@@ -137,6 +137,61 @@ class PetStateTests(unittest.TestCase):
         pet.w = pet.h = 128
         self.assertEqual(pet._clamp_pet_position(1334, 689), (1238, 640))
 
+    def test_usage_badge_is_hidden_when_both_limits_are_off(self):
+        with patch('logging.handlers.RotatingFileHandler', return_value=logging.NullHandler()):
+            cat_module = importlib.import_module('cat')
+
+        class Value:
+            def __init__(self, value):
+                self.value = value
+
+            def get(self):
+                return self.value
+
+        class BadgeWindow:
+            def __init__(self):
+                self.withdrawn = False
+
+            def withdraw(self):
+                self.withdrawn = True
+
+        pet = object.__new__(cat_module.ClaudeCat)
+        pet.show_pct = Value(True)
+        pet.monitor_enabled = Value(False)
+        pet.codex_limits_enabled = Value(False)
+        pet.badge_win = BadgeWindow()
+
+        pet._update_badge()
+
+        self.assertTrue(pet.badge_win.withdrawn)
+        pet.codex_limits_enabled.value = True
+        self.assertTrue(pet._usage_badge_enabled())
+
+    def test_clear_log_removes_rotated_files_and_logging_continues(self):
+        with patch('logging.handlers.RotatingFileHandler', return_value=logging.NullHandler()):
+            cat_module = importlib.import_module('cat')
+        with tempfile.TemporaryDirectory() as directory:
+            log_file = Path(directory) / 'claudecat.log'
+            test_logger = logging.getLogger(f'claudecat-clear-test-{id(self)}')
+            test_logger.setLevel(logging.INFO)
+            test_logger.propagate = False
+            handler = logging.handlers.RotatingFileHandler(
+                log_file, maxBytes=1024, backupCount=2, encoding='utf-8')
+            test_logger.addHandler(handler)
+            try:
+                test_logger.info('before clear')
+                Path(f'{log_file}.1').write_text('older log', encoding='utf-8')
+
+                cat_module._clear_log_files(test_logger, log_file)
+
+                self.assertEqual(log_file.read_text(encoding='utf-8'), '')
+                self.assertFalse(Path(f'{log_file}.1').exists())
+                test_logger.info('after clear')
+                self.assertIn('after clear', log_file.read_text(encoding='utf-8'))
+            finally:
+                test_logger.removeHandler(handler)
+                handler.close()
+
 
 class PluginTests(unittest.TestCase):
     def test_builtin_plugins_are_fixed_allowlisted_actions(self):
@@ -201,6 +256,14 @@ class ApiTests(unittest.TestCase):
         _generation, history = wm.history_snapshot()
         self.assertEqual(history, [])
 
+    def test_chat_uses_the_model_selected_by_the_user(self):
+        wm._current_model = 'user-selected-model'
+        with patch.object(wm, 'history_snapshot', return_value=(1, [])), \
+             patch.object(wm, 'append_history_if_current', return_value=None), \
+             patch.object(llm, 'chat', return_value={'content': 'ok'}) as chat:
+            JsApi().send_message('hello')
+        self.assertEqual(chat.call_args.kwargs['model'], 'user-selected-model')
+
     def test_every_assistant_tab_docks_the_pet_window(self):
         wm._open_evt.clear()
         try:
@@ -211,6 +274,14 @@ class ApiTests(unittest.TestCase):
         finally:
             wm._open_evt.clear()
 
+    def test_tool_window_is_explicitly_shown_in_the_taskbar(self):
+        native = type('NativeWindow', (), {'ShowInTaskbar': False})()
+        window = type('ToolWindow', (), {'native': native})()
+
+        wm._show_in_taskbar(window)
+
+        self.assertTrue(native.ShowInTaskbar)
+
 
 class LlmTests(unittest.TestCase):
     def test_model_list_deduplicates_primary_and_fallbacks(self):
@@ -219,6 +290,23 @@ class LlmTests(unittest.TestCase):
             'fallback_models': ['fallback', 'primary', 'fallback'],
         }):
             self.assertEqual(llm.list_models(), ['primary', 'fallback'])
+
+    def test_selecting_model_preserves_the_other_available_models(self):
+        with tempfile.TemporaryDirectory() as directory:
+            config_path = Path(directory) / 'config.json'
+            with patch.object(settings, 'CONFIG_FILE', config_path), \
+                 patch.object(settings, 'config', {}), \
+                 patch.object(llm, '_config_file', config_path), \
+                 patch.object(llm, '_config', {
+                     'model': 'primary',
+                     'fallback_models': ['fallback'],
+                 }):
+                llm.save_config_model('fallback')
+                saved = json.loads(config_path.read_text(encoding='utf-8'))['llm']
+                models = llm.list_models()
+        self.assertEqual(saved['model'], 'fallback')
+        self.assertEqual(saved['fallback_models'], ['primary'])
+        self.assertEqual(models, ['fallback', 'primary'])
 
     def test_context_overflow_detection(self):
         self.assertTrue(llm._looks_like_context_overflow('Maximum context length exceeded'))
@@ -339,6 +427,21 @@ class TranslationTests(unittest.TestCase):
         self.assertIn('SQL 欄位名稱', system)
         self.assertIn('JSON Key', system)
         self.assertIn('Receipt → 收料', system)
+
+    def test_simplified_chinese_prompt_and_same_language_rejection(self):
+        messages = translation_service.build_messages('測試', {
+            'source': 'zh-TW', 'target': 'zh-CN',
+        })
+        system = messages[0]['content']
+        self.assertIn('來源語言：繁體中文', system)
+        self.assertIn('目標語言：簡體中文', system)
+        self.assertIn('簡體中文字形', system)
+        with patch.object(llm, 'chat') as chat:
+            result = translation_service.translate('測試', {
+                'source': 'zh-CN', 'target': 'zh-CN',
+            })
+        self.assertEqual(result['error'], '來源語言與目標語言不可相同。')
+        chat.assert_not_called()
 
     def test_translation_uses_task_routed_model(self):
         with patch.object(llm, 'model_for_task', return_value='translate-model'), \
