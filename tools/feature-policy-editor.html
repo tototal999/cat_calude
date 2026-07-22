@@ -1,0 +1,233 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ClaudeCat 功能政策產生器</title>
+<style>
+  :root{--violet:#5B4FE8;--navy:#0D0E2B;--card:#F0F2FA;--line:#DDE1F2;--ink:#1E1F35;--muted:#6B6E85;--red:#D92D20;--ok:#1F8A5B}
+  *{box-sizing:border-box}
+  body{margin:0;font-family:"Microsoft JhengHei","Segoe UI",sans-serif;color:var(--ink);background:#fff}
+  header{background:var(--violet);color:#fff;padding:20px 32px}
+  header h1{margin:0;font-size:22px}
+  header p{margin:6px 0 0;font-size:13px;opacity:.85}
+  main{max-width:980px;margin:0 auto;padding:26px 32px 60px}
+  .warn{background:#FFF4F2;border-left:4px solid var(--red);padding:12px 16px;font-size:13px;line-height:1.7;margin-bottom:22px}
+  .warn b{color:var(--red)}
+  section{margin-bottom:26px}
+  h2{font-size:15px;color:var(--violet);margin:0 0 10px;letter-spacing:.5px}
+  .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:10px}
+  label.item{display:flex;align-items:flex-start;gap:10px;background:var(--card);border:1px solid var(--line);
+             border-left:4px solid var(--violet);padding:11px 13px;cursor:pointer;font-size:14px}
+  label.item.sub{border-left-color:#B9B3F3;margin-left:18px}
+  label.item input{margin:2px 0 0}
+  label.item .id{display:block;font-family:Consolas,monospace;font-size:11px;color:var(--muted);margin-top:3px}
+  label.item.off{opacity:.55}
+  label.item.locked{cursor:not-allowed;background:#EFEDFD;border-left-color:#8E86F5}
+  label.item.locked .lock{display:inline-block;font-size:11px;color:var(--violet);
+                          border:1px solid var(--violet);padding:1px 6px;margin-left:6px;font-weight:600}
+  .row{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin:14px 0}
+  button{font-family:inherit;font-size:14px;padding:9px 18px;border:1px solid var(--violet);
+         background:var(--violet);color:#fff;cursor:pointer}
+  button.sec{background:#fff;color:var(--violet)}
+  button:disabled{opacity:.45;cursor:not-allowed}
+  pre{background:#15132E;color:#C9C5F5;padding:16px;overflow:auto;font-family:Consolas,monospace;font-size:12.5px;
+      max-height:340px;margin:0}
+  .status{font-size:13px;padding:8px 0;min-height:20px}
+  .status.ok{color:var(--ok)} .status.err{color:var(--red)}
+  .hint{font-size:12.5px;color:var(--muted);line-height:1.75}
+  input[type=file]{font-size:13px}
+</style>
+</head>
+<body>
+<header>
+  <h1>ClaudeCat 功能政策產生器</h1>
+  <p>勾選要開放的功能，產生 <code>feature-policy.json</code>，放進專案根目錄後<b>重新打包 EXE</b>。</p>
+</header>
+<main>
+
+<div class="warn">
+  <b>政策烤在 EXE 裡，改完必須重新打包才會生效。</b><br>
+  這樣使用者沒有可以編輯或刪除的政策檔（放在 exe 旁的檔案，刪掉就等於全部解鎖）。
+  但這仍是部署控制、<b>不是資安機制</b>：會解開 PyInstaller 封裝的人依然拿得到。
+  重點是「用記事本改一行」這條路被堵住了。
+</div>
+
+<section>
+  <h2>① 載入現有政策（可略過）</h2>
+  <p class="hint">
+    要在現有設定上修改，就載入專案根目錄的 <code>feature-policy.json</code>；
+    要從全部開啟開始，直接跳到下一步即可。
+    公司 LLM 端點設定在另一個檔案（<code>company-defaults.json</code>），與這裡無關、不會被影響。
+  </p>
+  <div class="row">
+    <input type="file" id="pick" accept=".json,application/json">
+    <button class="sec" id="skip">從全部開啟開始</button>
+  </div>
+  <div class="status" id="loadStatus"></div>
+</section>
+
+<section>
+  <h2>② 主要功能入口</h2>
+  <div class="grid" id="mainGrid"></div>
+</section>
+
+<section>
+  <h2>③ 子功能</h2>
+  <p class="hint">上層關閉時，其子功能一律連帶關閉（程式端也會這樣判定）。</p>
+  <div class="grid" id="subGrid"></div>
+</section>
+
+<section>
+  <h2>④ 產生檔案</h2>
+  <div class="row">
+    <button id="dl">下載 feature-policy.json</button>
+    <button class="sec" id="copy">複製 JSON</button>
+    <span class="status" id="genStatus"></span>
+  </div>
+  <pre id="out">（尚未產生）</pre>
+  <p class="hint">
+    <b>套用步驟：</b>把下載的 <code>feature-policy.json</code> 覆蓋到專案根目錄，
+    再執行 <code>pyinstaller ClaudeCat.spec --clean -y</code> 重新打包，最後發布
+    <code>dist\ClaudeCat</code>。<br>
+    政策只在打包版生效，開發時直接跑 <code>cat.py</code> 不受影響。
+    檔案缺失或格式錯誤時，程式會記錄警告並<b>全部功能開啟</b>，不會啟動失敗。
+  </p>
+</section>
+
+</main>
+<script>
+// locked:true = 必要功能，程式端強制開啟，改 JSON 也關不掉
+const MAIN = [
+  ['quick_question','快速提問', true],
+  ['chat','交談（LLM 介面）', true],
+  ['documents','文件助手'],
+  ['json','JSON 工具'],
+  ['translate','翻譯'],
+  ['settings','模型設定'],
+  ['schedule','排程'],
+];
+const SUB = [
+  ['documents.meeting_pack','文件會議包'],
+  ['documents.compare','比較文件'],
+  ['chat.attachments','附件分析'],
+  ['chat.export_pptx','簡報匯出 PPTX'],
+  ['usage.claude','Claude 用量顯示'],
+  ['usage.codex','Codex 用量顯示'],
+];
+let baseDoc = null;   // 載入的既有檔案（保留 llm 等其他區塊）
+
+function build(list, host, cls){
+  host.innerHTML = '';
+  list.forEach(([id,label,locked])=>{
+    const l=document.createElement('label');
+    l.className='item'+(cls?' '+cls:'')+(locked?' locked':'');
+    l.innerHTML='<input type="checkbox" checked data-id="'+id+'"'+(locked?' disabled':'')+'><span>'+
+                label+(locked?' <b class="lock">必要功能・不可關閉</b>':'')+
+                '<span class="id">'+id+'</span></span>';
+    host.appendChild(l);
+  });
+}
+build(MAIN, document.getElementById('mainGrid'));
+build(SUB, document.getElementById('subGrid'), 'sub');
+
+const LOCKED = new Set(MAIN.concat(SUB).filter(m=>m[2]).map(m=>m[0]));
+function allBoxes(){ return [...document.querySelectorAll('input[data-id]')]; }
+function parentOf(id){ return id.includes('.') ? id.split('.')[0] : null; }
+
+function refresh(){
+  const state = {};
+  allBoxes().forEach(b=>state[b.dataset.id]=b.checked);
+  allBoxes().forEach(b=>{
+    const id = b.dataset.id;
+    if (LOCKED.has(id)) { b.checked = true; b.disabled = true; return; }
+    const p = parentOf(id);
+    // usage.* 沒有對應的主入口，不做連動
+    const gated = p && state[p] === false && MAIN.some(m=>m[0]===p);
+    b.disabled = gated;
+    b.closest('label').classList.toggle('off', gated || !b.checked);
+  });
+  render();
+}
+function policyObject(){
+  const state = {};
+  allBoxes().forEach(b=>{
+    const id = b.dataset.id;
+    if (LOCKED.has(id)) { state[id] = true; return; }
+    const p = parentOf(id);
+    const gated = p && MAIN.some(m=>m[0]===p) &&
+                  !allBoxes().find(x=>x.dataset.id===p).checked;
+    state[id] = gated ? false : b.checked;
+  });
+  return state;
+}
+function fullDoc(){
+  return {
+    _comment: '由 tools/feature-policy-editor.html 產生。改完必須重新打包 EXE 才會生效。' +
+              'chat 與 quick_question 為必要功能，永遠開啟。',
+    features: policyObject(),
+  };
+}
+function render(){
+  document.getElementById('out').textContent = JSON.stringify(fullDoc(), null, 1);
+}
+document.addEventListener('change', e=>{ if(e.target.dataset && e.target.dataset.id) refresh(); });
+
+document.getElementById('pick').addEventListener('change', e=>{
+  const f = e.target.files[0]; if(!f) return;
+  const st = document.getElementById('loadStatus');
+  const r = new FileReader();
+  r.onload = () => {
+    try{
+      const doc = JSON.parse(r.result.replace(/^﻿/,''));
+      if(typeof doc !== 'object' || doc === null || Array.isArray(doc)) throw new Error('最外層不是物件');
+      baseDoc = doc;
+      if(!doc.features || typeof doc.features !== 'object'){
+        throw new Error('檔案裡沒有 features 區塊');
+      }
+      st.className='status ok';
+      st.textContent = '已載入現有政策，下方勾選已同步。';
+      if(doc.features && typeof doc.features==='object'){
+        allBoxes().forEach(b=>{
+          if(LOCKED.has(b.dataset.id)) return;   // 必要功能忽略檔案內的值
+          if(typeof doc.features[b.dataset.id] === 'boolean') b.checked = doc.features[b.dataset.id];
+        });
+      }
+      refresh();
+    }catch(err){
+      st.className='status err';
+      st.textContent = '讀取失敗：' + err.message + '（檔案未被採用）';
+    }
+  };
+  r.readAsText(f, 'utf-8');
+});
+document.getElementById('skip').addEventListener('click', ()=>{
+  baseDoc = null;
+  allBoxes().forEach(b=>{ b.checked = true; });
+  const st=document.getElementById('loadStatus');
+  st.className='status ok';
+  st.textContent='已重設為全部開啟。';
+  refresh();
+});
+document.getElementById('dl').addEventListener('click', ()=>{
+  const blob = new Blob([JSON.stringify(fullDoc(), null, 1)], {type:'application/json'});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'feature-policy.json';
+  a.click();
+  URL.revokeObjectURL(a.href);
+  const st=document.getElementById('genStatus'); st.className='status ok'; st.textContent='已下載';
+});
+document.getElementById('copy').addEventListener('click', async ()=>{
+  const st=document.getElementById('genStatus');
+  try{
+    await navigator.clipboard.writeText(JSON.stringify(fullDoc(), null, 1));
+    st.className='status ok'; st.textContent='已複製到剪貼簿';
+  }catch(e){
+    st.className='status err'; st.textContent='複製失敗，請手動選取下方 JSON';
+  }
+});
+refresh();
+</script>
+</body>
+</html>

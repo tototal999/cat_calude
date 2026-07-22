@@ -21,6 +21,7 @@ from pathlib import Path
 import webview
 
 from backend.services import llm_service as llm
+from config import policy
 
 logger = logging.getLogger('claudecat')
 
@@ -126,6 +127,9 @@ def request_open(tab: str = 'schedule') -> None:
     """Open (or focus) the singleton window at the given tab.
     Safe to call from the tk thread."""
     global _pending_tab
+    if not policy.is_enabled(tab):
+        logger.info('blocked by feature policy: open tab %s', tab)
+        return
     _pending_tab = tab
     # The singleton window can open any tool tab.  Dock the always-on-top
     # desktop pet for all of them, not just the Chat tab, so it cannot cover

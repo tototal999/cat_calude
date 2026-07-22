@@ -591,7 +591,7 @@ function appendAssistantUI(text) {
   const actions = document.createElement('div');
   actions.className = 'msg-actions';
   
-  if (text.includes('# Slide')) {
+  if (text.includes('# Slide') && _featurePolicy['chat.export_pptx'] !== false) {
     const pptBtn = document.createElement('button');
     pptBtn.innerHTML = '📽️ PPT';
     pptBtn.title = 'Export to PowerPoint';
@@ -924,9 +924,36 @@ function useStarter(text) {
   autoResize(input);
 }
 
+// 公司政策關閉的功能完全隱藏，不以灰色不可點呈現。
+let _featurePolicy = {};
+function applyFeaturePolicy(policy) {
+  if (!policy) return;
+  _featurePolicy = policy;
+  ['chat', 'documents', 'json', 'translate', 'settings', 'schedule'].forEach(id => {
+    if (policy[id] === false) {
+      const btn = document.getElementById('nav-' + id);
+      if (btn) btn.style.display = 'none';
+    }
+  });
+  const hide = (elId, allowed) => {
+    if (allowed === false) {
+      const el = document.getElementById(elId);
+      if (el) el.style.display = 'none';
+    }
+  };
+  hide('meeting-pack-start', policy['documents.meeting_pack']);
+  hide('meeting-pack-translate-label', policy['documents.meeting_pack']);
+  hide('workflow-clear-btn', policy['documents.meeting_pack']);
+  hide('compare-document', policy['documents.compare']);
+  hide('compare-document-btn', policy['documents.compare']);
+  hide('chat-attach', policy['chat.attachments']);
+  // PPT 匯出鈕是逐則訊息動態產生，改由 _featurePolicy 在建立時判斷。
+}
+
 window.addEventListener('pywebviewready', () => {
   try {
     syncFields();
+    pywebview.api.feature_policy().then(applyFeaturePolicy).catch(() => {});
     pywebview.api.get_tab().then(t => showTab(t)).catch(e => alert('Error in get_tab: ' + e));
     pywebview.api.list_schedules().then(renderSchedule).catch(e => alert('Error in list_schedules: ' + e));
   } catch (err) {

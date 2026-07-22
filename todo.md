@@ -69,6 +69,7 @@ Claude／Codex limits 與聊天／文件助手完全獨立，預設 OFF。兩者
 - [o] P7-A2. 翻譯與健康檢查錯誤直接顯示；程式碼／SQL／JSON Key／API path／檔名／錯誤碼以佔位符實際鎖定並驗證還原；待使用者內網端點實機確認。（2026-07-19）
 - [x] P7-A3. 路由、設定 merge、sidecar 模型覆寫、本機 OpenAI-compatible 假端點與 worker／排程反例均有回歸測試。（2026-07-19：Python 3.11 `test_logic.py` 全數通過、`node --check frontend/chat.js`、`git diff --check`；測試數量見 [in_progress.md](in_progress.md)）
 - [x] P7-A4. 已於第三輪修正後重新打包 `ClaudeCat.exe` 並執行啟動煙霧測試；啟動 5 秒仍存活，且 `verify_packaged_documents.py` 驗證 PDF／DOCX／PPTX／XLSX 索引與來源定位通過。（2026-07-19）
+- [x] P7-A5. 公司內部建置使用不進 Git 的 `company-defaults.json`，將公司端點與模型白名單編譯進 EXE；乾淨使用者不需旁掛設定檔，既有外部 URL／非核准模型會被強制改回公司設定。（2026-07-22：打包 EXE 隔離驗證）
 
 ### 已知後續風險（不得宣稱已完成）
 
@@ -150,6 +151,64 @@ Claude／Codex limits 與聊天／文件助手完全獨立，預設 OFF。兩者
 > P8-R4～R6 回歸已覆蓋：stale running 復原為可重試 failed 且可清理、保留中壞 JSON 的
 > Markdown Artifact 不被 prune、retry 後 latest 立即指向新 Run。全專案測試與修正版
 > EXE 四格式／Workflow／啟動驗證均通過。
+>
+> 2026-07-21 獨立複驗（以原先抓到 R4～R6 的同一組探測腳本重跑，六項全通過）：
+> R4 前一 session 留下的 `running` Run 會自動標記為 failed 並寫入中斷原因，中斷步驟一併
+> 標記 failed，可重新執行、可被 `clear_history()` 清除；**本行程正在跑的 `pending` Run
+> 不會被誤殺**（`owner_session` 比對正確）。R5 弄壞 Run JSON 後 prune，其 Markdown
+> Artifact 確實保留；超過 `MAX_CORRUPT_RUNS=5` 的損毀檔才連同 Artifact 淘汰。
+> R6 retry 後、execute 前 `latest_run()` 已指向新的重試 Run。
+> `verify_packaged_workflow.py` 重跑為 `QA_RESULT|STATUS:PASS`；`dist\ClaudeCat` 實測
+> **78.1 MiB**（2026-07-20 建置，較前一版 77.1 MiB 增加）。
+
+### 公司功能政策（2026-07-21）
+
+> 需求：由 IT 統一決定哪些功能開放給使用者，使用者不能自行打開；關閉的功能完全隱藏，
+> 不以灰色不可點呈現。政策由獨立的產生器網頁編輯，不放進 App 內。
+
+- [x] P9-1. `feature-policy.json` 作為建置期功能政策來源；政策編譯進 EXE 且不寫回
+      `config.json`，使用者無法在 App 內改回。公司 LLM 則由另一份受 Git 忽略的
+      `company-defaults.json` 在建置時編譯進 EXE。
+- [x] P9-2. 三個介面同步隱藏：右鍵選單、pywebview 側欄分頁、系統匣。
+- [x] P9-3. **JsApi 層真正的閘門**：藏選單只是外觀，JS 仍可直接呼叫 bridge，因此在
+      `backend/routes/api.py` 以單一 `_GATED_METHODS` 對照表包裝 32 個方法，被關閉者回
+      「此功能已由公司政策停用。」。表格集中一處，整個管制面可一次讀完。
+      `window_main.request_open()` 亦拒絕被關閉的分頁。
+- [x] P9-4. 子功能可獨立關閉：文件會議包、比較文件、附件分析、簡報匯出 PPTX、
+      Claude／Codex 用量。上層關閉時子功能連帶關閉。
+- [x] P9-6. **`chat` 與 `quick_question` 列為必要功能，不可關閉**：兩者都是向公司 LLM
+      提問的入口，關掉產品即無意義。以 `policy.MANDATORY_FEATURES` 在程式端強制開啟，
+      手改 JSON 設為 `false` 也無效（只記錄警告）；產生器網頁顯示為鎖定且輸出恆為 `true`。
+      `chat` 的子功能（附件分析、簡報匯出）仍可獨立關閉。
+      （2026-07-21 追加 `quick_question`；因現行政策本就啟用，行為不變、不需重新打包。）
+- [x] P9-7. 被擋的清單型端點回傳空 list 而非錯誤 dict：`list_documents`／`list_sessions`
+      的呼叫端會 `forEach`，回錯誤物件會讓前端拋例外而非安靜降級。
+- [x] P9-5. 獨立產生器網頁 `tools/feature-policy-editor.html`（單檔、離線可用、不隨 App 發布）。
+      可載入既有 `company-defaults.json` 以保留 `llm` 區塊，勾選後下載或複製 JSON。
+- [x] P9-A1. 回歸測試：上層關閉連帶子功能、子功能單獨關閉、缺檔／壞檔／未知 id／非布林值
+      均停止載入、政策不寫入 config.json、**繞過測試（直接呼叫 JsApi 應被擋）**、
+      未關閉功能仍可用、對照表方法名存在性。
+
+- [x] P9-8. **政策編譯進 PYZ 封存，不以資料檔發布**：先前把 `feature-policy.json` 放進
+      `datas` 打包，實測發現 onedir 模式的 `_internal\` 是一般資料夾，該檔**可被直接改寫**
+      （實際用指令把 `settings` 由 false 改為 true 成功），等於沒鎖。改由 `ClaudeCat.spec`
+      在建置時把政策產生成 `config/_baked_policy.py`，隨 PYZ 編譯；`dist` 內已無任何
+      政策 JSON 或 .py 明文。要改政策必須重新打包。
+- [x] P9-9. SOP 簡報改由同一份 `feature-policy.json` 驅動（`tools/sop-deck-gen.js`），
+      關閉的功能不會出現在簡報中，避免教到使用者按不到的東西。
+- [x] P9-10. 公司版允許切換建置時核准的公司模型，但不允許修改 Provider／API URL 或使用
+      非白名單模型；Claude／Codex limits 開放且維持逐人同意。政策或部署資料異常時停止建置／啟動。
+
+**已知限制（必須明講，不得宣稱為資安機制）：**
+政策編譯進封存後，「用記事本改一行」這條路被堵住，但會解開 PyInstaller 封裝的人仍可取得。
+定位為「設定公司預設、防止誤用」，不是存取控制。
+
+**設計決定：**
+- 政策只在打包版（`sys.frozen`）生效，開發時直接跑 `cat.py` 不受干擾。
+- 來源單一：`feature-policy.json`（repo 根目錄）→ 建置時產生 `config/_baked_policy.py`
+  （已列入 `.gitignore`，非手改檔）→ 編譯進 EXE。
+- 外部 `company-defaults.json` 若仍留有 `features` 區塊會被忽略，並記錄警告，
+  避免有人以為改了外部檔就生效。
 
 ### 後續里程碑
 

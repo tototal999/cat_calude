@@ -25,7 +25,7 @@ from pathlib import Path
 from typing import Any
 
 import requests
-from config import settings
+from config import deployment, settings
 
 logger = logging.getLogger('claudecat')
 
@@ -36,7 +36,7 @@ logger = logging.getLogger('claudecat')
 #   "llm": {"base_url": "http://your-host:8000/v1", "model": "your-model"}
 
 _DEFAULTS: dict[str, Any] = {
-    'base_url': 'http://localhost:8000/v1',   # example only - set your own in config.json
+    'base_url': '',
     'model': '',
     'api_key': '',
     'system_prompt': (
@@ -121,6 +121,8 @@ def list_models() -> list[str]:
     The primary model is always first, followed by fallback_models.
     Duplicates are removed while preserving order.
     """
+    if deployment.managed() and not _local_sidecar_active:
+        return deployment.models()
     primary = _get('model') or ''
     fallbacks = _get('fallback_models') or []
     seen: set[str] = set()
@@ -175,15 +177,16 @@ def model_for_task(task: str, fallback: str = '') -> str:
         # A llama.cpp sidecar accepts its own alias, not company task-route ids.
         return str(_get('model') or 'local-model').strip()
     task = str(task or 'chat')
+    allowed = set(deployment.models()) if deployment.managed() else None
     task_models = _get('task_models')
     if isinstance(task_models, dict):
         selected = str(task_models.get(task) or '').strip()
-        if selected:
+        if selected and (allowed is None or selected in allowed):
             return selected
     modes = _get('model_modes')
     if isinstance(modes, dict):
         selected = str(modes.get(model_mode()) or '').strip()
-        if selected:
+        if selected and (allowed is None or selected in allowed):
             return selected
     return str(fallback or _get('model') or '').strip()
 
@@ -209,18 +212,21 @@ def save_toolbox_settings(values: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(values, dict):
         raise ValueError('設定格式無效。')
     patch: dict[str, Any] = {}
+    company_managed = deployment.managed()
     provider = str(values.get('provider') or '').strip()
-    if provider:
+    if provider and not company_managed:
         if provider not in {'company', 'ollama', 'openai-compatible', 'local'}:
             raise ValueError('Provider 設定無效。')
         patch['provider'] = provider
     base_url = str(values.get('base_url') or '').strip().rstrip('/')
-    if base_url:
+    if base_url and not company_managed:
         if not re.match(r'^https?://[^\s/]+(?::\d+)?(?:/[^\s]*)?$', base_url):
             raise ValueError('API URL 必須是 http 或 https URL。')
         patch['base_url'] = base_url
     model = str(values.get('model') or '').strip()
     if model:
+        if company_managed and model not in deployment.models():
+            raise ValueError('選擇的模型不在公司核准清單中。')
         patch['model'] = model[:200]
     timeout = values.get('request_timeout')
     if timeout not in (None, ''):
@@ -242,8 +248,13 @@ def save_toolbox_settings(values: dict[str, Any]) -> dict[str, Any]:
         if value is not None:
             if not isinstance(value, dict):
                 raise ValueError(f'{key} 必須是物件。')
-            patch[key] = {name: str(value.get(name) or '').strip()[:200]
-                          for name in allowed if name in value}
+            routes = {name: str(value.get(name) or '').strip()[:200]
+                      for name in allowed if name in value}
+            if company_managed and any(
+                    model_name and model_name not in deployment.models()
+                    for model_name in routes.values()):
+                raise ValueError('任務模型不在公司核准清單中。')
+            patch[key] = routes
     if patch:
         settings.merge_config({'llm': patch})
         _config.update(patch)
@@ -301,7 +312,19 @@ def chat(messages: list[dict[str, str]],
     and retry once.
     """
     model = model or current_model()
-    base = str(_get('base_url') or _DEFAULTS['base_url']).rstrip('/')
+    if deployment.managed() and not _local_sidecar_active:
+        if model not in deployment.models():
+            return {'error': '模型不在公司核准清單中。',
+                    'context_overflow': False}
+        base = deployment.settings()['base_url']
+    else:
+        base = str(_get('base_url') or '').strip().rstrip('/')
+    if not base:
+        return {'error': '尚未設定公司 LLM API URL，請聯絡安裝人員。',
+                'context_overflow': False}
+    if not model:
+        return {'error': '尚未設定公司 LLM 模型，請聯絡安裝人員。',
+                'context_overflow': False}
     url = f'{base}/chat/completions'
 
     headers: dict[str, str] = {'Content-Type': 'application/json'}
@@ -361,7 +384,16 @@ def probe(timeout: int | None = None, model: str | None = None) -> str | None:
     or an error string on failure.  Used for the warm-up probe on window open."""
     timeout = timeout if isinstance(timeout, int) and timeout > 0 else min(request_timeout(), 30)
     model = model or current_model()
-    base = str(_get('base_url') or _DEFAULTS['base_url']).rstrip('/')
+    if deployment.managed() and not _local_sidecar_active:
+        if model not in deployment.models():
+            return '模型不在公司核准清單中。'
+        base = deployment.settings()['base_url']
+    else:
+        base = str(_get('base_url') or '').strip().rstrip('/')
+    if not base:
+        return '尚未設定公司 LLM API URL，請聯絡安裝人員。'
+    if not model:
+        return '尚未設定公司 LLM 模型，請聯絡安裝人員。'
     url = f'{base}/chat/completions'
 
     headers: dict[str, str] = {'Content-Type': 'application/json'}

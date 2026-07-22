@@ -5,6 +5,8 @@ import threading
 from pathlib import Path
 from typing import Callable
 
+from config import policy
+
 
 class TrayService:
     def __init__(self, icon_path: Path, dispatch: Callable[[str], None]) -> None:
@@ -21,15 +23,23 @@ class TrayService:
         except (ImportError, OSError):
             return False
 
-        menu = pystray.Menu(
+        items = [
             pystray.MenuItem('顯示貓', lambda _icon, _item: self._dispatch('show')),
             pystray.MenuItem('隱藏貓', lambda _icon, _item: self._dispatch('hide')),
             pystray.Menu.SEPARATOR,
-            pystray.MenuItem('快速提問', lambda _icon, _item: self._dispatch('quick_question')),
-            pystray.MenuItem('文件助手', lambda _icon, _item: self._dispatch('documents')),
-            pystray.Menu.SEPARATOR,
-            pystray.MenuItem('結束', lambda _icon, _item: self._dispatch('quit')),
-        )
+        ]
+        # Keep the tray in step with the right-click menu under company policy.
+        # pystray inspects the action's signature, so bind the id with a closure
+        # rather than a default argument (a 3-parameter lambda is rejected).
+        def dispatcher(action_id):
+            return lambda _icon, _item: self._dispatch(action_id)
+
+        for feature_id, label in (('quick_question', '快速提問'), ('documents', '文件助手')):
+            if policy.is_enabled(feature_id):
+                items.append(pystray.MenuItem(label, dispatcher(feature_id)))
+        items.append(pystray.Menu.SEPARATOR)
+        items.append(pystray.MenuItem('結束', lambda _icon, _item: self._dispatch('quit')))
+        menu = pystray.Menu(*items)
         self._icon = pystray.Icon('ClaudeCat', image, 'ClaudeCat', menu)
         threading.Thread(target=self._icon.run, daemon=True).start()
         return True

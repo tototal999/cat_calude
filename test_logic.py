@@ -21,7 +21,7 @@ from backend.services import llm_service as llm
 from backend.services import json_tools
 from backend.services import translation_service
 from backend.services import workflow_service as workflows
-from config import settings
+from config import deployment, policy, settings
 import backend.window_main as wm
 from pet.state_machine import PetState, PetStateMachine
 from plugins import builtin as builtin_plugins
@@ -284,6 +284,28 @@ class ApiTests(unittest.TestCase):
 
 
 class LlmTests(unittest.TestCase):
+    def test_company_managed_llm_rejects_external_models_and_endpoint_changes(self):
+        company = {
+            'provider': 'company',
+            'base_url': 'http://company.test/v1',
+            'model': 'company-a',
+            'fallback_models': ['company-b'],
+            'request_timeout': 120,
+        }
+        with patch.object(deployment, 'managed', return_value=True), \
+             patch.object(deployment, 'models', return_value=['company-a', 'company-b']), \
+             patch.object(deployment, 'settings', return_value=company), \
+             patch.object(llm.requests, 'post') as post:
+            self.assertEqual(llm.list_models(), ['company-a', 'company-b'])
+            result = llm.chat([{'role': 'user', 'content': 'hello'}], model='external-model')
+            with self.assertRaises(ValueError):
+                llm.save_toolbox_settings({
+                    'base_url': 'https://external.example/v1',
+                    'model': 'external-model',
+                })
+        self.assertEqual(result['error'], '模型不在公司核准清單中。')
+        post.assert_not_called()
+
     def test_model_list_deduplicates_primary_and_fallbacks(self):
         with patch.object(llm, '_config', {
             'model': 'primary',
@@ -315,6 +337,13 @@ class LlmTests(unittest.TestCase):
     def test_file_size_limit_has_a_safe_default(self):
         with patch.object(llm, '_config', {}):
             self.assertEqual(llm.max_file_bytes(), 10 * 1024 * 1024)
+
+    def test_missing_company_endpoint_never_calls_localhost(self):
+        with patch.object(llm, '_config', {'model': 'model-a'}), \
+             patch.object(llm.requests, 'post') as post:
+            result = llm.chat([{'role': 'user', 'content': 'hello'}])
+        self.assertIn('尚未設定公司 LLM API URL', result['error'])
+        post.assert_not_called()
 
     def test_local_endpoint_rejects_non_loopback_address(self):
         with self.assertRaises(ValueError):
@@ -508,6 +537,43 @@ class SettingsTests(unittest.TestCase):
                 data = json.loads(config_path.read_text(encoding='utf-8'))
             self.assertEqual(data['skin'], 'bluecat')
             self.assertEqual(data['llm'], {'model': 'model-a', 'debug_log': True})
+
+    def test_company_deployment_forces_endpoint_and_preserves_allowed_model(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            config_path = root / 'config.json'
+            config_path.write_text(json.dumps({
+                'skin': 'bluecat',
+                'llm': {
+                    'base_url': 'https://external.example/v1',
+                    'model': 'company-b',
+                    'task_models': {'document': 'external-model'},
+                },
+            }), encoding='utf-8')
+            company = {
+                'provider': 'company',
+                'base_url': 'http://company.test/v1',
+                'model': 'company-a',
+                'fallback_models': ['company-b'],
+                'request_timeout': 120,
+            }
+            with patch.object(settings, 'CONFIG_FILE', config_path), \
+                 patch.object(settings, 'config', {}):
+                changed = settings.apply_company_deployment(company)
+                data = json.loads(config_path.read_text(encoding='utf-8'))
+        self.assertTrue(changed)
+        self.assertEqual(data['skin'], 'bluecat')
+        self.assertEqual(data['llm']['model'], 'company-b')
+        self.assertEqual(data['llm']['base_url'], 'http://company.test/v1')
+        self.assertEqual(data['llm']['fallback_models'], ['company-a'])
+        self.assertEqual(data['llm']['task_models'], {})
+
+    def test_deployment_rejects_loopback_and_invalid_models(self):
+        with self.assertRaises(deployment.DeploymentError):
+            deployment._validate({
+                'base_url': 'http://127.0.0.1:8000/v1',
+                'model': 'company-a',
+            })
 
 
 
@@ -989,6 +1055,109 @@ class WorkerTests(unittest.TestCase):
             deck = Presentation(target)
         self.assertEqual(len(deck.slides), 2)
         self.assertEqual(deck.slides[1].shapes.title.text, '2')
+
+
+class FeaturePolicyTests(unittest.TestCase):
+    """Company policy must gate the bridge, not just the menus."""
+
+    def tearDown(self):
+        self._policy({})
+
+    def _policy(self, overrides):
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        path = Path(directory.name) / 'feature-policy.json'
+        features = {feature_id: True for feature_id in policy.FEATURE_IDS}
+        features.update(overrides)
+        path.write_text(json.dumps({'features': features}, ensure_ascii=False), encoding='utf-8')
+        return policy.load(path)
+
+    def test_missing_policy_file_stops_loading(self):
+        with self.assertRaises(policy.PolicyError):
+            policy.load(Path('no-such-policy.json'))
+
+    def test_disabled_parent_also_disables_its_sub_features(self):
+        self._policy({'documents': False})
+        self.assertFalse(policy.is_enabled('documents'))
+        self.assertFalse(policy.is_enabled('documents.meeting_pack'))
+        self.assertFalse(policy.is_enabled('documents.compare'))
+        self.assertTrue(policy.is_enabled('json'))   # unlisted stays on
+
+    def test_sub_feature_can_be_disabled_on_its_own(self):
+        self._policy({'documents.meeting_pack': False})
+        self.assertTrue(policy.is_enabled('documents'))
+        self.assertFalse(policy.is_enabled('documents.meeting_pack'))
+
+    def test_broken_policy_file_stops_loading(self):
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        path = Path(directory.name) / 'company-defaults.json'
+        path.write_text('{ not json', encoding='utf-8')
+        with self.assertRaises(policy.PolicyError):
+            policy.load(path)
+
+    def test_llm_entry_points_cannot_be_disabled_by_policy(self):
+        with self.assertRaises(policy.PolicyError):
+            self._policy({'chat': False, 'quick_question': False})
+
+    def test_mandatory_parent_does_not_force_its_sub_features_on(self):
+        self._policy({'chat.attachments': False})
+        self.assertFalse(policy.is_enabled('chat.attachments'))
+
+    def test_unknown_feature_ids_stop_loading(self):
+        with self.assertRaises(policy.PolicyError):
+            self._policy({'made_up_feature': False})
+
+    def test_missing_or_non_boolean_feature_values_stop_loading(self):
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        path = Path(directory.name) / 'feature-policy.json'
+        path.write_text(json.dumps({'features': {'chat': 'yes'}}), encoding='utf-8')
+        with self.assertRaises(policy.PolicyError):
+            policy.load(path)
+
+    def test_policy_is_not_written_back_into_user_config(self):
+        """A user must not be able to re-enable a feature by editing config.json."""
+        self._policy({'json': False})
+        self.assertNotIn('features', settings.load_config())
+
+    def test_disabled_feature_is_blocked_on_the_bridge_not_only_the_menu(self):
+        from backend.routes.api import JsApi
+        self._policy({'documents': False, 'json': False})
+        api = JsApi()
+        blocked = {'error': policy.DISABLED_MESSAGE}
+        self.assertEqual(api.json_tool('{"a":1}'), blocked)
+        self.assertEqual(api.query_document('x', 'y'), blocked)
+        self.assertEqual(
+            api.start_document_meeting_pack('550e8400-e29b-41d4-a716-446655440000'), blocked)
+        self.assertEqual(api.clear_workflow_history(), blocked)
+
+    def test_enabled_features_still_work_while_others_are_blocked(self):
+        from backend.routes.api import JsApi
+        self._policy({'documents': False})
+        result = JsApi().json_tool('{"a":1}', 'format')
+        self.assertNotEqual(result.get('error'), policy.DISABLED_MESSAGE)
+
+    def test_blocked_list_endpoints_keep_returning_a_list(self):
+        """The UI iterates these; an error dict would throw instead of degrade."""
+        from backend.routes.api import JsApi
+        self._policy({'documents': False})
+        self.assertEqual(JsApi().list_documents(), [])
+
+    def test_blocked_schedule_keeps_the_frontend_result_shape(self):
+        self._policy({'schedule': False})
+        self.assertEqual(JsApi().list_schedules(), {'items': [], 'errors': []})
+
+    def test_model_switch_is_allowed_when_advanced_settings_are_hidden(self):
+        self._policy({'settings': False})
+        with patch.object(llm, 'save_config_model') as save_model:
+            self.assertEqual(JsApi().set_model('company-a'), {'model': 'company-a'})
+        save_model.assert_called_once_with('company-a')
+
+    def test_every_gated_method_exists_on_the_bridge(self):
+        from backend.routes import api as api_module
+        for name in api_module._GATED_METHODS:
+            self.assertTrue(hasattr(api_module.JsApi, name), name)
 
 
 if __name__ == '__main__':

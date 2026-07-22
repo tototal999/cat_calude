@@ -79,3 +79,45 @@ def merge_config(patch: dict) -> dict:
         config.clear()
         config.update(data)
         return dict(data)
+
+
+def apply_company_deployment(llm_defaults: dict) -> bool:
+    """Force the packaged company endpoint while preserving an allowed model."""
+    allowed_models = [llm_defaults['model'], *llm_defaults['fallback_models']]
+
+    global config
+    with _config_lock:
+        data = _read_config_unlocked()
+        llm_config = data.get('llm')
+        if not isinstance(llm_config, dict):
+            llm_config = {}
+            data['llm'] = llm_config
+        selected = str(llm_config.get('model') or '').strip()
+        if selected not in allowed_models:
+            selected = allowed_models[0]
+        enforced = dict(llm_defaults)
+        enforced['model'] = selected
+        enforced['fallback_models'] = [m for m in allowed_models if m != selected]
+        for key in ('model_modes', 'task_models'):
+            routes = llm_config.get(key)
+            if isinstance(routes, dict):
+                enforced[key] = {
+                    name: model for name, model in routes.items()
+                    if str(model).strip() in allowed_models}
+        changed = any(llm_config.get(key) != value for key, value in enforced.items())
+        if changed:
+            llm_config.update(enforced)
+        if not changed:
+            return False
+        temporary = CONFIG_FILE.with_suffix('.tmp')
+        try:
+            temporary.write_text(
+                json.dumps(data, indent=1, ensure_ascii=False), encoding='utf-8')
+            temporary.replace(CONFIG_FILE)
+        except OSError:
+            logger.exception('could not apply deployment defaults')
+            temporary.unlink(missing_ok=True)
+            raise
+        config.clear()
+        config.update(data)
+        return True

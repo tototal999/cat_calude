@@ -17,7 +17,8 @@
 - 失敗／取消 Run 可重新執行，建立新的可稽核 Run 並保留來源 Run，單一重試鏈最多 3 次。
 - Workspace 直接顯示抽樣 coverage、來源定位與 Artifact；Run 不保存文件來源全文。
 - Router 沿用文件任務模型；公司 LLM／本機 llama.cpp 邊界不變，Claude／Codex 不參與 Workflow。
-- 新版 `dist\ClaudeCat` 為 77.1 MiB；四格式文件定位與打包文件會議包 E2E 均通過，啟動 8 秒存活。
+- 公司內部建置使用受 Git 忽略的 `company-defaults.json`，將公司端點與模型白名單編譯進 EXE；乾淨使用者不需旁掛設定檔，既有外部 URL／非核准模型會被強制改回公司設定。
+- 新版 `dist\ClaudeCat` 為 78.1 MiB（2026-07-20 建置）；四格式文件定位與打包文件會議包 E2E 均通過，啟動 8 秒存活。
 - 尚待使用者依 `USER_TEST.md` 人工確認三次操作內取得 Markdown、來源／coverage 顯示與重試按鈕。
 - 2026-07-19 獨立測試發現的 P8-R1～R3 已修正：同一來源 Run 只允許一個 `retry_to`，
   建立／重試按鈕防雙擊；`latest_run()` 會略過壞 JSON 回退到最近有效 Run；歷史自動保留
@@ -34,6 +35,46 @@
   新 Run，`latest_run()` 立即指向新 pending Run，失效 `retry_to` 也可自動修復。
 - P8-R4～R6 回歸與修正版 EXE 複驗通過：stale Run 可重試／清理、損毀 JSON 不誤刪成果、
   retry 最新順序正確；四格式文件、完整 Workflow 與 8 秒啟動均 PASS，大小維持 77.1 MiB。
+- 2026-07-21 獨立複驗 P8-R4～R6：以原先抓到問題的同一組探測腳本重跑，六項全通過——
+  前一 session 的 `running` Run 自動標記 failed（含中斷步驟）並可重試／可清除，
+  本行程的 `pending` Run 未被誤殺；損毀 Run JSON 的 Markdown Artifact 確實保留，
+  超過 `MAX_CORRUPT_RUNS=5` 才淘汰；retry 後 `latest_run()` 立即指向新 Run。
+  `verify_packaged_workflow.py` 為 `QA_RESULT|STATUS:PASS`，`dist\ClaudeCat` 實測 78.1 MiB。
+- 2026-07-21 查證：config 的 `llm.model` 與 log 中 `model=` 不一致並非缺陷。
+  `llm_service.py` 送出的 payload 用 config 值，log 記錄的是伺服器回應的
+  `data.get('model', model)`，即端點實際解析後使用的模型；兩者本就可能不同。
+  已將執行期 `config.json` 的 `llm.model` 對齊為端點實際服務的完整名稱，並實際發送
+  測試請求確認端點接受完整名稱（送出與回報一致）。此後不再依賴端點的別名解析，
+  避免未來端點取消別名時出現不易聯想到設定檔的「模型不存在」錯誤。
+  註：`config.json` 屬每台電腦的執行期設定，不進版控。
+
+## 公司功能政策（2026-07-21）
+
+- 新增 `config/policy.py`：由專案根目錄的 `feature-policy.json` 決定哪些功能開放，建置時嚴格驗證並
+  編譯進 EXE。政策不寫回 `config.json`，使用者無法在 App 內改回；缺失或損壞時停止建置／啟動。
+- 關閉的功能在右鍵選單、側欄分頁與系統匣三處**完全隱藏**（非灰色不可點）。
+- 真正的閘門在 JsApi：`backend/routes/api.py` 以單一 `_GATED_METHODS` 對照表包裝 32 個方法，
+  被關閉者一律回「此功能已由公司政策停用。」。實測直接呼叫 bridge 確認擋得住，不是只藏選單。
+- 子功能可獨立關閉：文件會議包、比較文件、附件分析、簡報匯出 PPTX、Claude／Codex 用量。
+- **`chat` 與 `quick_question` 為必要功能，不可關閉**：兩者都是向公司 LLM 提問的入口。
+  以 `MANDATORY_FEATURES` 在程式端強制開啟，手改 JSON 設 `false` 無效（記錄警告）；
+  網頁顯示鎖定且輸出恆為 true，實測用開發者工具強制取消勾選也會被復原。
+  `chat` 的子功能（附件、PPTX 匯出）仍可獨立關閉。
+  （2026-07-21 追加 `quick_question`；現行政策本就啟用，行為不變、不需重新打包 EXE。）
+- 測試中發現並修正：`list_documents`／`list_sessions` 回傳 list，閘門原本一律回錯誤 dict，
+  會讓前端 `documents.forEach(...)` 拋例外；已改為被擋時回空 list，安靜降級。
+- 獨立產生器網頁 `tools/feature-policy-editor.html`（單檔離線、不隨 App 發布），可載入既有檔案
+  以保留 `llm` 區塊後再產生。實測 13 個開關與上下層連動正確。
+- **政策編譯進 PYZ 封存**：原先把 `feature-policy.json` 放進 `datas`，實測發現 onedir 的
+  `_internal\` 是一般資料夾、該檔可被直接改寫（實際改寫成功），等於沒鎖。已改由
+  `ClaudeCat.spec` 建置時產生 `config/_baked_policy.py` 隨 PYZ 編譯，`dist` 內不再有政策明文。
+  改政策 = 重新打包。**限制**：會解開 PyInstaller 封裝的人仍可取得；定位為部署控制而非資安機制。
+- 新版 EXE 已建置（77.1 MiB，2026-07-22），實機啟動與隔離部署檢查確認只停用進階
+  `settings`；Claude／Codex limits 已開放，外部 URL／非核准模型會被公司設定覆寫。
+- SOP 簡報改由同一份政策檔驅動（`tools/sop-deck-gen.js`），關閉的功能不會出現在簡報；
+  本次政策下自動從 17 頁減為 16 頁（移除「用量顯示」整頁與相關註腳）。
+- 開發過程修正：系統匣以預設參數綁值的 3 參數 lambda 會被 pystray 的 `_assert_action` 拒絕，
+  導致啟動即死；已改為閉包工廠，8 秒啟動煙霧測試通過。
 
 ## v6.2 桌面 AI 工具箱（2026-07-19）
 
@@ -46,7 +87,7 @@
 - 用量徽章同時顯示 Claude／Codex 時改為上下兩行，避免徽章過寬；Codex app-server 的安全錯誤訊息會直接顯示，便於判斷是否需要重新登入。
 - 2026-07-19 第二輪人工驗收：拖曳位置持久化、點擊快速提問、Skin 切換持久化、排程 60 秒自動收合、用量 OFF 零請求、閒置睡眠／驚醒與所有工具頁停靠均通過。Esc 原回報經真正的 Windows `VK_ESCAPE` 驗證為工具注入限制造成的假陽性，保留輸入框 Esc 綁定作防禦性處理。另發現最大化工具頁關閉後桌寵會以縮小時座標還原而出界；已補啟動、拖曳、尺寸還原與徽章的夾邊（`_clamp_pet_position()`），同日人工複驗通過：開排程→最大化→關閉後桌寵落在 (1238,640)-(1366,768)，完整留在 1366x768 畫面內，徽章亦被夾住。
 - 修正第三輪審查：文件檢索改用 CJK 詞組與最低相關門檻；長文件摘要／比較改為跨全文抽樣並明示非完整涵蓋；Word 表格與 Excel 欄標題會隨證據保留。翻譯以佔位符實際鎖定程式碼／SQL／識別碼，模型未完整保留即回報錯誤。
-- 驗證：Python 3.11 `test_logic.py` **66/66** 通過（此為全專案唯一記錄測試數量之處，其他文件一律不重複寫數字）（含 Workflow 崩潰復原、損毀成果保護、retry 最新順序／失效指標修復、重試唯一性、壞檔回退、歷史保留／清理、成功／部分成果／匯出失敗／取消／格式邊界、本機 OpenAI-compatible 假端點、中文誤命中、抽樣涵蓋、sidecar 路由、JSON 深度、翻譯還原、weekly 非當日、disabled/delete 排程、閒置睡眠與工具頁停靠回歸）；`node --check frontend/chat.js` 與 `git diff --check` 通過。翻譯／Health Check 的實際內網端點連線待使用者環境確認。文件助手已確認採公司內網 endpoint；不再將「完全離線推論」列為驗收阻塞。
+- 驗證：Python 3.11 `test_logic.py` **91/91** 通過（此為全專案唯一記錄測試數量之處，其他文件一律不重複寫數字）（含嚴格政策、公司端點／模型白名單、Workflow、文件、翻譯、排程與桌寵回歸）；`node --check frontend/chat.js`、`git diff --check`、打包文件／Workflow 與 8 秒 GUI 煙霧測試通過。實際內網語意品質仍待使用者環境確認。
 
 ### v6.2 尚待完成的實機項目
 

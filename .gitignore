@@ -4,3 +4,6 @@ __pycache__/
 build/
 dist/
 frames/jpg/
+config/_baked_policy.py
+config/_baked_deployment.py
+company-defaults.json

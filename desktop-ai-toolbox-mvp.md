@@ -35,14 +35,15 @@
 
 ### 模型選擇與路由
 
-- 一般聊天頂端直接顯示執行期設定的預設模型與 `fallback_models`，允許使用者手動切換。
-- 進階頁可檢視並修改 Provider 標籤、端點、預設模型、逾時、各任務模型與模式對應；不顯示 API Key。
+- 一般聊天頂端顯示建置時核准的公司模型清單；有多個模型時允許使用者手動切換並保存。
+- 公司版不開放 Provider、API URL 或 API Key 編輯；任務模型也只能從公司白名單選取。
 - 翻譯、文件、程式分析與錯誤分析優先走 `task_models`；一般聊天使用頂端選定模型。
 - 模型健康檢查透過現有 OpenAI-compatible `/chat/completions` 發送極小請求，回傳成功或明確錯誤。
 
 ## 執行期設定範例
 
-以下資料只存在 `%LOCALAPPDATA%\ClaudeCat\config.json`，不得提交：
+以下為設定結構示意。公司端點與核准模型由受 Git 忽略的建置輸入提供並編譯進 EXE；
+執行期 `%LOCALAPPDATA%\ClaudeCat\config.json` 不得提交，且打包版會覆寫其中的外部端點或非核准模型：
 
 ```json
 {

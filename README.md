@@ -71,10 +71,10 @@ Format、Minify、Validate、搜尋、Copy、Tree View 與 JSONPath。
 ### 3. 模型選擇與任務路由
 
 - 頂端模型選單直接列出預設模型與 `fallback_models`；使用者選擇後立即套用於一般聊天並保存，
-  重新啟動後仍保留，其他模型選項不會因切換而消失。
+  重新啟動後仍保留。打包版只接受建置時核准的公司模型，不能輸入任意模型或改接外部 LLM。
 - **任務模型路由**：翻譯、文件、程式分析與錯誤分析可各自指定模型；
   未設定時回退至模式對應，再退回預設模型。
-- 進階設定頁提供 Health Check。目前只驗證聊天模型，其餘任務路由待逐一驗證。
+- 公司版隱藏進階 Provider／API URL 設定；模型切換仍可使用，但只能在公司白名單內選擇。
 
 > **API Key 不由 UI 管理。** 憑證僅由公司安裝程序或使用者的執行期 `config.json` 提供，
 > 避免以未加密的 UI 欄位保存。詳見下方「LLM 交談設定」。
@@ -149,10 +149,20 @@ pyinstaller ClaudeCat.spec --clean -y
 ```
 產出在 `dist\ClaudeCat`。`skins\` 與 `frontend\` 會一併凍入資料夾中。之後新增皮膚不需重新打包，丟到 exe 旁邊的 `skins\` 資料夾即可。2026-07-19 最新建置約 **77.1 MiB**（含三套完整狀態素材）；已以打包 EXE 驗證 PDF、DOCX、PPTX、XLSX 文件索引，以及 DOCX → 來源檢索 → 本機假 LLM → Markdown Artifact 的完整文件會議包。
 
+公司內部建置前，專案根目錄必須提供不進 Git 的 `company-defaults.json`。`ClaudeCat.spec`
+會嚴格驗證公司 endpoint、模型白名單與功能政策，再編譯進 EXE；缺檔、壞 JSON、未知政策鍵、
+非布林值或必要功能被關閉都會停止打包。執行時若內嵌設定缺失或損壞，程式會明確報錯並停止，
+不會退回全部開啟或 localhost。發布時不再需要把 `company-defaults.json` 放在 EXE 旁。
+
+打包版會強制公司 Provider 與 API URL，並將既有外部 URL／非核准模型改回公司設定；使用者仍可
+從頂端選單切換核准的公司模型。Claude／Codex limits 在公司政策中開放，但仍須每位使用者首次同意。
+
 桌寵會顯示為 Windows 工作列的 `ClaudeCat` 項目；可直接按該項目的關閉按鈕結束程式，位置會照既有流程保存。
 
 ## LLM 交談設定
-**這是公開 repo, 真實端點不寫進程式碼**——實際設定寫在執行期的 `%LOCALAPPDATA%\ClaudeCat\config.json`（不進版控）：
+**這是公開 repo，真實端點不寫進版控。** 公司建置使用受 Git 忽略的 `company-defaults.json`，
+並將端點與模型白名單編譯進內部發布 EXE；執行期 `%LOCALAPPDATA%\ClaudeCat\config.json`
+只保存使用者在公司白名單內的模型選擇與其他個人設定：
 ```json
 {
   "llm": {

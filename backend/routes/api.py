@@ -3,7 +3,7 @@ from backend.services import document_service as documents
 from backend.services import json_tools
 from backend.services import translation_service
 from backend.services import workflow_service as workflows
-from config import settings
+from config import policy, settings
 import json
 import logging
 import threading
@@ -360,6 +360,9 @@ class JsApi:
     def send_message(self, text, attached_file=None):
         prompt_text = text
         if attached_file:
+            # The picker is gated too, but a caller can pass a path directly.
+            if not policy.is_enabled('chat.attachments'):
+                return {'error': policy.DISABLED_MESSAGE}
             try:
                 p = Path(attached_file)
                 if not p.is_file():
@@ -474,3 +477,76 @@ class JsApi:
             return {'error': None, 'path': str(path)}
         except Exception as exc:
             return {'error': str(exc)}
+
+    def feature_policy(self):
+        """Effective policy so the sidebar can hide what IT switched off."""
+        return policy.snapshot()
+
+
+# ---- Company feature policy enforcement -------------------------------------
+# Hiding menu entries is cosmetic; JS can still call the bridge directly, so the
+# gate lives here.  One table = the whole policy surface in a single place.
+_GATED_METHODS = {
+    'list_schedules': 'schedule',
+    'upsert_schedule': 'schedule',
+    'delete_schedule': 'schedule',
+    'json_tool': 'json',
+    'translate_text': 'translate',
+    'toolbox_settings': 'settings',
+    'save_toolbox_settings': 'settings',
+    'health_check': 'settings',
+    'set_model_mode': 'settings',
+    'open_document_dialog': 'documents',
+    'ingest_document': 'documents',
+    'list_documents': 'documents',
+    'remove_document': 'documents',
+    'query_document': 'documents',
+    'document_action': 'documents',
+    'compare_documents': 'documents.compare',
+    'start_document_meeting_pack': 'documents.meeting_pack',
+    'get_workflow_run': 'documents.meeting_pack',
+    'latest_workflow_run': 'documents.meeting_pack',
+    'cancel_workflow_run': 'documents.meeting_pack',
+    'retry_workflow_run': 'documents.meeting_pack',
+    'clear_workflow_history': 'documents.meeting_pack',
+    'export_ppt': 'chat.export_pptx',
+    'open_file_dialog': 'chat.attachments',
+    'send_message': 'chat',
+    'save_note': 'chat',
+    'export_chat': 'chat',
+    'list_sessions': 'chat',
+    'load_session': 'chat',
+    'delete_session': 'chat',
+    'clear_history': 'chat',
+}
+
+
+# These return a bare list; handing the UI an error dict instead would make
+# `documents.forEach(...)` throw rather than degrade quietly.
+_EMPTY_RESULTS = {
+    'list_sessions': [],
+    'list_documents': [],
+    'list_schedules': {'items': [], 'errors': []},
+}
+
+
+def _install_policy_gates() -> None:
+    def gate(func, feature_id, empty_result):
+        def guarded(self, *args, **kwargs):
+            if not policy.is_enabled(feature_id):
+                logger.info('blocked by feature policy: %s', feature_id)
+                return empty_result if empty_result is not None else {
+                    'error': policy.DISABLED_MESSAGE}
+            return func(self, *args, **kwargs)
+        guarded.__name__ = func.__name__
+        guarded.__doc__ = func.__doc__
+        return guarded
+
+    for name, feature_id in _GATED_METHODS.items():
+        original = getattr(JsApi, name, None)
+        if original is None:      # method renamed - fail loudly at import, not silently
+            raise AttributeError(f'feature policy references unknown JsApi method: {name}')
+        setattr(JsApi, name, gate(original, feature_id, _EMPTY_RESULTS.get(name)))
+
+
+_install_policy_gates()

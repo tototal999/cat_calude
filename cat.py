@@ -28,7 +28,7 @@ Success criteria (QA):
 from __future__ import annotations
 
 import ctypes
-from config import settings
+from config import deployment, policy, settings
 LOG_DIR = settings.LOG_DIR
 LOG_FILE = settings.LOG_FILE
 CONFIG_FILE = settings.CONFIG_FILE
@@ -184,14 +184,14 @@ class ClaudeCat:
         self.claude_limits_available = api.CLAUDE_CREDENTIALS.exists()
         self.monitor_enabled = tk.BooleanVar(
             value=bool(um.get('enabled', False)) and self.claude_consent_accepted
-            if isinstance(um, dict) else False)
+            and policy.is_enabled('usage.claude') if isinstance(um, dict) else False)
         codex = cfg.get('codex_limits', {})
         self.codex_consent_accepted = bool(codex.get('consent_accepted', False)) \
             if isinstance(codex, dict) else False
         self.codex_limits_available = codex_limits.find_executable() is not None
         self.codex_limits_enabled = tk.BooleanVar(
             value=bool(codex.get('enabled', False)) and self.codex_consent_accepted
-            if isinstance(codex, dict) else False)
+            and policy.is_enabled('usage.codex') if isinstance(codex, dict) else False)
         api.set_usage_api_enabled(self.monitor_enabled.get())
         # 'live' | 'error' | 'full': lets you preview the sleep/frozen poses
         # from the right-click menu instead of waiting for the real thing.
@@ -580,13 +580,19 @@ class ClaudeCat:
         m = tk.Menu(self.root, tearoff=0)
         m.add_command(label=self._status_text(), state='disabled')
         m.add_separator()
-        m.add_command(label='快速提問...', command=self._open_quick_question)
-        m.add_command(label='交談（LLM 介面）...', command=self._open_chat)
-        m.add_command(label='文件助手...', command=self._open_documents)
-        m.add_command(label='JSON 工具...', command=self._open_json)
-        m.add_command(label='翻譯...', command=self._open_translation)
-        m.add_command(label='模型設定...', command=self._open_settings)
-        m.add_command(label='排程...', command=self._open_schedule)
+        # Company policy hides entries outright rather than greying them out,
+        # so users don't ask why a visible item can't be clicked.
+        for feature_id, label, command in (
+            ('quick_question', '快速提問...', self._open_quick_question),
+            ('chat', '交談（LLM 介面）...', self._open_chat),
+            ('documents', '文件助手...', self._open_documents),
+            ('json', 'JSON 工具...', self._open_json),
+            ('translate', '翻譯...', self._open_translation),
+            ('settings', '模型設定...', self._open_settings),
+            ('schedule', '排程...', self._open_schedule),
+        ):
+            if policy.is_enabled(feature_id):
+                m.add_command(label=label, command=command)
 
         skin_menu = tk.Menu(m, tearoff=0)
         for name in spritecat.list_skins():
@@ -615,12 +621,14 @@ class ClaudeCat:
         sm = tk.Menu(parent, tearoff=0)
         sm.add_checkbutton(label='Always on top', variable=self.topmost,
                            command=self._set_topmost)
-        monitor_label = 'Claude limits（異常）' if (self.monitor_enabled.get()
-                                                    and self.monitor_unavailable) else 'Claude limits'
-        sm.add_checkbutton(label=monitor_label, variable=self.monitor_enabled,
-                           command=self._toggle_monitor)
-        sm.add_checkbutton(label='Codex limits（非官方）',
-                           variable=self.codex_limits_enabled, command=self._toggle_codex_limits)
+        if policy.is_enabled('usage.claude'):
+            monitor_label = 'Claude limits（異常）' if (self.monitor_enabled.get()
+                                                        and self.monitor_unavailable) else 'Claude limits'
+            sm.add_checkbutton(label=monitor_label, variable=self.monitor_enabled,
+                               command=self._toggle_monitor)
+        if policy.is_enabled('usage.codex'):
+            sm.add_checkbutton(label='Codex limits（非官方）',
+                               variable=self.codex_limits_enabled, command=self._toggle_codex_limits)
         sm.add_checkbutton(label='Face right', variable=self.facing_right,
                            command=self._apply_look)
         sm.add_checkbutton(label='Show usage badge', variable=self.show_pct,
@@ -1268,8 +1276,27 @@ class ClaudeCat:
         threading.Thread(target=run, daemon=True).start()
 
 
+def _load_company_controls() -> dict | None:
+    company_llm = deployment.load()
+    policy.load()
+    if company_llm is not None and settings.apply_company_deployment(company_llm):
+        logger.info('company LLM deployment enforced')
+    return company_llm
+
+
 if __name__ == '__main__':
     import sys
+    if len(sys.argv) > 1 and sys.argv[1] == '--deployment-check':
+        try:
+            company_llm = _load_company_controls()
+            if company_llm is None:
+                raise deployment.DeploymentError('打包版本沒有公司 LLM 部署設定。')
+            print('QA_RESULT|STATUS:PASS|EXPECTED:strict company deployment|'
+                  f'ACTUAL:{len(deployment.models())} allowed model(s)')
+            sys.exit(0)
+        except (deployment.DeploymentError, policy.PolicyError, OSError) as exc:
+            print(f'QA_RESULT|STATUS:FAIL|EXPECTED:strict company deployment|ACTUAL:{exc}')
+            sys.exit(1)
     if len(sys.argv) > 2:
         if sys.argv[1] == '--worker':
             import worker
@@ -1320,6 +1347,14 @@ if __name__ == '__main__':
             template = sys.argv[3] if len(sys.argv) > 3 and sys.argv[3] else None
             worker.generate_ppt(target, template)
             sys.exit(0)
+
+    try:
+        _load_company_controls()
+    except (deployment.DeploymentError, policy.PolicyError, OSError) as exc:
+        logger.exception('mandatory company deployment validation failed')
+        ctypes.windll.user32.MessageBoxW(
+            None, str(exc), 'ClaudeCat 啟動失敗', 0x10)
+        sys.exit(1)
 
     if not _acquire_single_instance_lock():
         # Silent exit: a withdrawn Tk root can't reliably host a modal
