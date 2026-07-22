@@ -38,6 +38,12 @@ try {
         Write-Host 'Removed stale release manifest.'
     }
 
+    $runningClaudeCat = @(Get-Process ClaudeCat -ErrorAction SilentlyContinue)
+    if ($runningClaudeCat) {
+        $runningIds = ($runningClaudeCat.Id -join ', ')
+        throw "ClaudeCat is already running (PID: $runningIds). Close it before a release build."
+    }
+
     Write-Host 'Step 1/8: Python business-logic tests'
     & $python -m unittest test_logic.py
     if ($LASTEXITCODE -ne 0) { throw "Python tests failed with exit code $LASTEXITCODE." }
@@ -89,9 +95,6 @@ try {
     $verification += 'release-content'
 
     Write-Host 'Step 8/8: Packaged GUI startup smoke'
-    if (Get-Process ClaudeCat -ErrorAction SilentlyContinue) {
-        throw 'ClaudeCat is already running. Close it before a release build.'
-    }
     $guiProcess = $null
     $originalLocalAppData = $env:LOCALAPPDATA
     try {
@@ -108,6 +111,10 @@ try {
         if ($null -ne $guiProcess -and -not $guiProcess.HasExited) {
             Stop-Process -Id $guiProcess.Id -Force
             Wait-Process -Id $guiProcess.Id -ErrorAction SilentlyContinue
+        }
+        foreach ($spawnedProcess in @(Get-Process ClaudeCat -ErrorAction SilentlyContinue)) {
+            Stop-Process -Id $spawnedProcess.Id -Force
+            Wait-Process -Id $spawnedProcess.Id -ErrorAction SilentlyContinue
         }
     }
     Write-Host 'Release verification passed.'
