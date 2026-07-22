@@ -1,12 +1,19 @@
 # ClaudeCat 進度報告
 
-> 產生時間：2026-07-17（同日多次更新，見「今日修正」）
+> 最後更新：2026-07-22；目前交付版本以本節與 release manifest 為準，後文較小體積數字為歷史紀錄。
 > 對應 spec：claudecat-chat-spec.md v5.6
 > 對應 TODO：todo.md
 
 ---
 
 ## 已完成功能總覽
+
+### 目前發布快照
+
+- v7.0.0 onedir：81.4 MiB、2,667 個檔案；EXE SHA-256 已與 manifest 核對。
+- 92/92 業務測試與 8/8 發布驗證通過，包含 GUI、公司部署、四格式文件及文件 Workflow。
+- 目前政策停用 JSON、進階模型設定、排程、文件會議包、比較文件與聊天附件；其餘功能維持開放。
+- 發布 log 與 manifest 已產生；正式公司發布仍待程式碼簽章，且本輪 manifest 為 `git_dirty`。
 
 ## v7 企業 AI 工作台（2026-07-19，開發中）
 
@@ -63,14 +70,22 @@
   （2026-07-21 追加 `quick_question`；現行政策本就啟用，行為不變、不需重新打包 EXE。）
 - 測試中發現並修正：`list_documents`／`list_sessions` 回傳 list，閘門原本一律回錯誤 dict，
   會讓前端 `documents.forEach(...)` 拋例外；已改為被擋時回空 list，安靜降級。
-- 獨立產生器網頁 `tools/feature-policy-editor.html`（單檔離線、不隨 App 發布），可載入既有檔案
-  以保留 `llm` 區塊後再產生。實測 13 個開關與上下層連動正確。
+- 獨立產生器網頁 `tools/feature-policy-editor.html`（單檔離線、不隨 App 發布），實測 13 個開關與
+  上下層連動正確。管理者改用 `tools/open-feature-policy-editor.bat` 啟動時，會自動載入根目錄的
+  `feature-policy.json`，修改後經嚴格驗證並原子覆蓋同一檔案；打包仍由管理者手動執行。
 - **政策編譯進 PYZ 封存**：原先把 `feature-policy.json` 放進 `datas`，實測發現 onedir 的
   `_internal\` 是一般資料夾、該檔可被直接改寫（實際改寫成功），等於沒鎖。已改由
   `ClaudeCat.spec` 建置時產生 `config/_baked_policy.py` 隨 PYZ 編譯，`dist` 內不再有政策明文。
   改政策 = 重新打包。**限制**：會解開 PyInstaller 封裝的人仍可取得；定位為部署控制而非資安機制。
-- 新版 EXE 已建置（77.1 MiB，2026-07-22），實機啟動與隔離部署檢查確認只停用進階
-  `settings`；Claude／Codex limits 已開放，外部 URL／非核准模型會被公司設定覆寫。
+- 新版 EXE 已建置（81.4 MiB，2026-07-22），實機啟動與隔離部署檢查通過；實際停用項目以
+  同輪 `ClaudeCat_release-manifest.json` 為準。Claude／Codex limits 已開放，外部 URL／非核准模型
+  會被公司設定覆寫。
+- **可稽核發布流程（2026-07-22）**：新增 `tools/build-release.ps1`，完整 log 放在
+  `build/release-logs/`，成功 manifest 放在 `dist/ClaudeCat_release-manifest.json`；記錄來源政策、
+  私有部署設定與 EXE 的 SHA-256，不在 manifest 暴露端點。最終建置 92/92 測試及 8/8 發布驗證
+  通過，包含一般 GUI 啟動煙霧；`dist/ClaudeCat` 為 81.4 MiB、2,667 個檔案。
+- PyInstaller 建置期間仍須暫時產生 `config/_baked_policy.py` 與 `_baked_deployment.py` 供分析，
+  但 spec 的結束清理與發布腳本 finally 雙重移除；本輪建置後確認兩檔皆不存在。
 - SOP 簡報改由同一份政策檔驅動（`tools/sop-deck-gen.js`），關閉的功能不會出現在簡報；
   本次政策下自動從 17 頁減為 16 頁（移除「用量顯示」整頁與相關註腳）。
 - 開發過程修正：系統匣以預設參數綁值的 3 參數 lambda 會被 pystray 的 `_assert_action` 拒絕，
@@ -87,7 +102,7 @@
 - 用量徽章同時顯示 Claude／Codex 時改為上下兩行，避免徽章過寬；Codex app-server 的安全錯誤訊息會直接顯示，便於判斷是否需要重新登入。
 - 2026-07-19 第二輪人工驗收：拖曳位置持久化、點擊快速提問、Skin 切換持久化、排程 60 秒自動收合、用量 OFF 零請求、閒置睡眠／驚醒與所有工具頁停靠均通過。Esc 原回報經真正的 Windows `VK_ESCAPE` 驗證為工具注入限制造成的假陽性，保留輸入框 Esc 綁定作防禦性處理。另發現最大化工具頁關閉後桌寵會以縮小時座標還原而出界；已補啟動、拖曳、尺寸還原與徽章的夾邊（`_clamp_pet_position()`），同日人工複驗通過：開排程→最大化→關閉後桌寵落在 (1238,640)-(1366,768)，完整留在 1366x768 畫面內，徽章亦被夾住。
 - 修正第三輪審查：文件檢索改用 CJK 詞組與最低相關門檻；長文件摘要／比較改為跨全文抽樣並明示非完整涵蓋；Word 表格與 Excel 欄標題會隨證據保留。翻譯以佔位符實際鎖定程式碼／SQL／識別碼，模型未完整保留即回報錯誤。
-- 驗證：Python 3.11 `test_logic.py` **91/91** 通過（此為全專案唯一記錄測試數量之處，其他文件一律不重複寫數字）（含嚴格政策、公司端點／模型白名單、Workflow、文件、翻譯、排程與桌寵回歸）；`node --check frontend/chat.js`、`git diff --check`、打包文件／Workflow 與 8 秒 GUI 煙霧測試通過。實際內網語意品質仍待使用者環境確認。
+- 驗證：Python 3.11 `test_logic.py` **92/92** 通過（含管理政策直接覆蓋的嚴格驗證、公司端點／模型白名單、Workflow、文件、翻譯、排程與桌寵回歸）；`node --check frontend/chat.js`、`git diff --check`、打包文件／Workflow 與 8 秒 GUI 煙霧測試通過。實際內網語意品質仍待使用者環境確認。
 
 ### v6.2 尚待完成的實機項目
 

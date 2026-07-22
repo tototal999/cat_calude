@@ -1,21 +1,27 @@
-"""Read-only company feature policy, baked into the exe at build time.
+"""Read-only company feature policy, compiled into the exe at build time.
 
-``feature-policy.json`` is bundled by ClaudeCat.spec and read back out of the
-PyInstaller bundle, *not* from a file beside the exe.  That is deliberate: a
-policy sitting next to the exe can be edited or simply deleted, and deleting it
-would turn every feature back on.  Baking it in means changing the policy is a
-rebuild, which is exactly the trade we want.
+``ClaudeCat.spec`` reads ``feature-policy.json`` during the build and writes it
+out as ``config/_baked_policy.py``, which is then compiled into the PYZ archive;
+the generated source is removed once the build finishes.  Packaged builds import
+that module - they never read a policy file from disk.  That is deliberate: a
+policy shipped as data (beside the exe, or under ``_internal/`` in an onedir
+build) is an ordinary file that can be edited or deleted, and deleting it would
+turn every feature back on.  Changing the policy therefore means rebuilding.
 
-Related but separate: ``company-defaults.json`` beside the exe still seeds the
-company LLM settings.  That one is a *default* (merged into the user's config,
-user may change it); this is a *policy* (never written to config.json).  A
-``features`` block in that external file is ignored on purpose.
+The company LLM endpoint and model whitelist are compiled in the same way, so a
+released build needs no ``company-defaults.json`` beside the exe.  That file is
+a *build input* (kept out of Git); this module is a *policy* and is never
+written to config.json, so the user cannot flip a disabled feature back on.
+
+Packaged builds fail closed: a missing, malformed, incomplete or
+mandatory-disabling policy raises PolicyError rather than enabling everything.
+Development runs have no baked module and stay unrestricted on purpose.
 
 Nothing here writes to disk.
 
 This is a deployment control, not a security boundary.  Someone who unpacks the
-PyInstaller archive can still reach the bundled file - the point is that editing
-a JSON in Notepad no longer does it.
+PyInstaller archive and recompiles the module can still reach it - the point is
+that editing a JSON in Notepad no longer does.
 """
 from __future__ import annotations
 

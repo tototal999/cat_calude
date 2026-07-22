@@ -1121,6 +1121,23 @@ class FeaturePolicyTests(unittest.TestCase):
         self._policy({'json': False})
         self.assertNotIn('features', settings.load_config())
 
+    def test_policy_editor_overwrites_only_after_strict_validation(self):
+        from tools.feature_policy_editor import PolicyEditorApi
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'feature-policy.json'
+            features = {feature_id: True for feature_id in policy.FEATURE_IDS}
+            original = {'_comment': 'keep', 'features': features}
+            path.write_text(json.dumps(original, ensure_ascii=False), encoding='utf-8')
+            editor = PolicyEditorApi(path)
+            loaded = editor.load_policy()
+            self.assertTrue(loaded['ok'])
+            loaded['document']['features']['json'] = False
+            self.assertTrue(editor.save_policy(loaded['document'])['ok'])
+            self.assertFalse(json.loads(path.read_text(encoding='utf-8'))['features']['json'])
+            before = path.read_text(encoding='utf-8')
+            self.assertFalse(editor.save_policy({'features': {'chat': False}})['ok'])
+            self.assertEqual(path.read_text(encoding='utf-8'), before)
+
     def test_disabled_feature_is_blocked_on_the_bridge_not_only_the_menu(self):
         from backend.routes.api import JsApi
         self._policy({'documents': False, 'json': False})

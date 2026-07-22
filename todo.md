@@ -1,5 +1,14 @@
 # ClaudeCat TODO
 
+## 目前發布快照（2026-07-22）
+
+- [x] v7.0.0 onedir：`dist\ClaudeCat` 81.4 MiB、2,667 個檔案。
+- [x] 92/92 業務測試、8/8 發布驗證及 EXE／manifest SHA-256 對照通過。
+- [x] 建置 log、release manifest、管理工具不進發布目錄、`_baked_*` 暫存來源清理完成。
+- [ ] 正式公司發布仍待程式碼簽章；目前 manifest 誠實標記工作區為 `git_dirty`。
+
+> 下方 77.1／78.1 MiB 等數字是舊版歷史驗證紀錄，不代表目前交付版本。
+
 ## v2 發行內容（2026-07-17）
 
 - [x] Open WebUI 風格的深色聊天介面：側欄、模型頂欄、歡迎提示與新版輸入列。
@@ -183,8 +192,9 @@ Claude／Codex limits 與聊天／文件助手完全獨立，預設 OFF。兩者
       （2026-07-21 追加 `quick_question`；因現行政策本就啟用，行為不變、不需重新打包。）
 - [x] P9-7. 被擋的清單型端點回傳空 list 而非錯誤 dict：`list_documents`／`list_sessions`
       的呼叫端會 `forEach`，回錯誤物件會讓前端拋例外而非安靜降級。
-- [x] P9-5. 獨立產生器網頁 `tools/feature-policy-editor.html`（單檔、離線可用、不隨 App 發布）。
-      可載入既有 `company-defaults.json` 以保留 `llm` 區塊，勾選後下載或複製 JSON。
+- [x] P9-5. 獨立產生器網頁 `tools/feature-policy-editor.html`（單檔、離線可用、不隨 App 發布）；
+      `tools/open-feature-policy-editor.bat` 管理模式會自動載入根目錄的 `feature-policy.json`，
+      驗證後直接覆蓋原檔。單獨 HTML 仍可手動載入、下載或複製 JSON。
 - [x] P9-A1. 回歸測試：上層關閉連帶子功能、子功能單獨關閉、缺檔／壞檔／未知 id／非布林值
       均停止載入、政策不寫入 config.json、**繞過測試（直接呼叫 JsApi 應被擋）**、
       未關閉功能仍可用、對照表方法名存在性。
@@ -198,6 +208,12 @@ Claude／Codex limits 與聊天／文件助手完全獨立，預設 OFF。兩者
       關閉的功能不會出現在簡報中，避免教到使用者按不到的東西。
 - [x] P9-10. 公司版允許切換建置時核准的公司模型，但不允許修改 Provider／API URL 或使用
       非白名單模型；Claude／Codex limits 開放且維持逐人同意。政策或部署資料異常時停止建置／啟動。
+- [x] P9-11. 單一發布腳本 `tools/build-release.ps1`：全程寫入時間戳 log，依序執行 92 項業務測試、
+      JavaScript、onedir 打包、公司部署、PDF／Office、文件 Workflow、發布內容與 GUI 煙霧驗證；
+      成功後在 `dist` 旁產生含政策／部署／EXE 雜湊的 release manifest。建置暫存 `_baked_*`
+      原始檔於成功或失敗時都會清除。（2026-07-22：8/8 發布驗證通過）
+- [ ] P9-R1. 正式公司發布仍待程式碼簽章；客戶端政策只屬部署控制，敏感模型／資料權限必須由
+      公司 LLM、身分驗證或網路 ACL 在伺服器端執行。
 
 **已知限制（必須明講，不得宣稱為資安機制）：**
 政策編譯進封存後，「用記事本改一行」這條路被堵住，但會解開 PyInstaller 封裝的人仍可取得。

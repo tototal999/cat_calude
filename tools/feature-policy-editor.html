@@ -41,8 +41,8 @@
 </head>
 <body>
 <header>
-  <h1>ClaudeCat 功能政策產生器</h1>
-  <p>勾選要開放的功能，產生 <code>feature-policy.json</code>，放進專案根目錄後<b>重新打包 EXE</b>。</p>
+  <h1>ClaudeCat 功能政策管理</h1>
+  <p>勾選要開放的功能，儲存 <code>feature-policy.json</code> 後由管理者重新打包 EXE。</p>
 </header>
 <main>
 
@@ -54,13 +54,13 @@
 </div>
 
 <section>
-  <h2>① 載入現有政策（可略過）</h2>
-  <p class="hint">
-    要在現有設定上修改，就載入專案根目錄的 <code>feature-policy.json</code>；
-    要從全部開啟開始，直接跳到下一步即可。
+  <h2>① 現有政策</h2>
+  <p class="hint" id="loadHint">
+    使用 <code>open-feature-policy-editor.bat</code> 啟動時會自動載入專案根目錄的
+    <code>feature-policy.json</code>；直接單獨開啟 HTML 時才需要手動選檔。
     公司 LLM 端點設定在另一個檔案（<code>company-defaults.json</code>），與這裡無關、不會被影響。
   </p>
-  <div class="row">
+  <div class="row" id="standaloneLoad">
     <input type="file" id="pick" accept=".json,application/json">
     <button class="sec" id="skip">從全部開啟開始</button>
   </div>
@@ -81,6 +81,7 @@
 <section>
   <h2>④ 產生檔案</h2>
   <div class="row">
+    <button id="save" style="display:none">儲存並覆蓋原檔</button>
     <button id="dl">下載 feature-policy.json</button>
     <button class="sec" id="copy">複製 JSON</button>
     <span class="status" id="genStatus"></span>
@@ -91,7 +92,7 @@
     再執行 <code>pyinstaller ClaudeCat.spec --clean -y</code> 重新打包，最後發布
     <code>dist\ClaudeCat</code>。<br>
     政策只在打包版生效，開發時直接跑 <code>cat.py</code> 不受影響。
-    檔案缺失或格式錯誤時，程式會記錄警告並<b>全部功能開啟</b>，不會啟動失敗。
+    檔案缺失或格式錯誤時，打包會停止；打包版的內嵌政策缺失或損壞時，程式也會停止啟動。
   </p>
 </section>
 
@@ -162,11 +163,11 @@ function policyObject(){
   return state;
 }
 function fullDoc(){
-  return {
+  return Object.assign({}, baseDoc || {}, {
     _comment: '由 tools/feature-policy-editor.html 產生。改完必須重新打包 EXE 才會生效。' +
               'chat 與 quick_question 為必要功能，永遠開啟。',
     features: policyObject(),
-  };
+  });
 }
 function render(){
   document.getElementById('out').textContent = JSON.stringify(fullDoc(), null, 1);
@@ -180,20 +181,7 @@ document.getElementById('pick').addEventListener('change', e=>{
   r.onload = () => {
     try{
       const doc = JSON.parse(r.result.replace(/^﻿/,''));
-      if(typeof doc !== 'object' || doc === null || Array.isArray(doc)) throw new Error('最外層不是物件');
-      baseDoc = doc;
-      if(!doc.features || typeof doc.features !== 'object'){
-        throw new Error('檔案裡沒有 features 區塊');
-      }
-      st.className='status ok';
-      st.textContent = '已載入現有政策，下方勾選已同步。';
-      if(doc.features && typeof doc.features==='object'){
-        allBoxes().forEach(b=>{
-          if(LOCKED.has(b.dataset.id)) return;   // 必要功能忽略檔案內的值
-          if(typeof doc.features[b.dataset.id] === 'boolean') b.checked = doc.features[b.dataset.id];
-        });
-      }
-      refresh();
+      applyDocument(doc, '已載入現有政策，下方勾選已同步。');
     }catch(err){
       st.className='status err';
       st.textContent = '讀取失敗：' + err.message + '（檔案未被採用）';
@@ -225,6 +213,49 @@ document.getElementById('copy').addEventListener('click', async ()=>{
     st.className='status ok'; st.textContent='已複製到剪貼簿';
   }catch(e){
     st.className='status err'; st.textContent='複製失敗，請手動選取下方 JSON';
+  }
+});
+
+function applyDocument(doc, message){
+  if(typeof doc !== 'object' || doc === null || Array.isArray(doc)) throw new Error('最外層不是物件');
+  if(!doc.features || typeof doc.features !== 'object') throw new Error('檔案裡沒有 features 區塊');
+  baseDoc = doc;
+  allBoxes().forEach(b=>{
+    if(LOCKED.has(b.dataset.id)) return;
+    if(typeof doc.features[b.dataset.id] === 'boolean') b.checked = doc.features[b.dataset.id];
+  });
+  const st = document.getElementById('loadStatus');
+  st.className = 'status ok';
+  st.textContent = message;
+  refresh();
+}
+
+document.getElementById('save').addEventListener('click', async ()=>{
+  const st = document.getElementById('genStatus');
+  try{
+    const result = await pywebview.api.save_policy(fullDoc());
+    if(!result.ok) throw new Error(result.error || '未知錯誤');
+    st.className = 'status ok';
+    st.textContent = '已覆蓋：' + result.path + '；請重新打包 EXE。';
+  }catch(err){
+    st.className = 'status err';
+    st.textContent = '儲存失敗：' + err.message;
+  }
+});
+
+window.addEventListener('pywebviewready', async ()=>{
+  const st = document.getElementById('loadStatus');
+  try{
+    const result = await pywebview.api.load_policy();
+    if(!result.ok) throw new Error(result.error || '未知錯誤');
+    applyDocument(result.document, '已自動載入：' + result.path);
+    document.getElementById('loadHint').textContent = '已進入管理模式；修改後按「儲存並覆蓋原檔」，再由管理者重新打包 EXE。';
+    document.getElementById('standaloneLoad').style.display = 'none';
+    document.getElementById('save').style.display = '';
+    document.getElementById('dl').style.display = 'none';
+  }catch(err){
+    st.className = 'status err';
+    st.textContent = '自動載入失敗：' + err.message;
   }
 });
 refresh();
