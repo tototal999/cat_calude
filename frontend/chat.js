@@ -24,6 +24,7 @@ function escapeHtml(value) {
 }
 
 function showTab(t) {
+  if (_featurePolicy[t] === false) return;
   document.querySelectorAll('.page').forEach(page => page.classList.remove('active'));
   document.querySelectorAll('.nav-item-static').forEach(item => item.classList.remove('active'));
   document.getElementById('page-' + t).classList.add('active');
@@ -32,7 +33,9 @@ function showTab(t) {
   if (t === 'chat' && !_chatInited) initChat();
   if (t === 'documents') {
     loadDocuments();
-    pywebview.api.latest_workflow_run().then(renderWorkflowRun);
+    if (_featurePolicy['documents.meeting_pack'] === true) {
+      pywebview.api.latest_workflow_run().then(renderWorkflowRun);
+    }
   }
   if (t === 'settings') loadToolboxSettings();
 }
@@ -591,7 +594,11 @@ function appendAssistantUI(text) {
   const actions = document.createElement('div');
   actions.className = 'msg-actions';
   
-  if (text.includes('# Slide') && _featurePolicy['chat.export_pptx'] !== false) {
+  // 與 worker.py 的切頁規則對齊：任何 H1（# 標題）或 ## Slide 標題都能轉檔。
+  // 原本只認英文字串 "# Slide"，導致輸出中文 H1 的模型（例如 gemma）明明可以
+  // 轉檔卻不顯示按鈕，被誤以為「不能產生簡報」。
+  const canExportPpt = /(^|\n)#[ \t]+\S/.test(text) || /(^|\n)##[ \t]+slide\b/i.test(text);
+  if (canExportPpt && _featurePolicy['chat.export_pptx'] !== false) {
     const pptBtn = document.createElement('button');
     pptBtn.innerHTML = '📽️ PPT';
     pptBtn.title = 'Export to PowerPoint';
@@ -953,9 +960,15 @@ function applyFeaturePolicy(policy) {
 window.addEventListener('pywebviewready', () => {
   try {
     syncFields();
-    pywebview.api.feature_policy().then(applyFeaturePolicy).catch(() => {});
-    pywebview.api.get_tab().then(t => showTab(t)).catch(e => alert('Error in get_tab: ' + e));
-    pywebview.api.list_schedules().then(renderSchedule).catch(e => alert('Error in list_schedules: ' + e));
+    pywebview.api.feature_policy().then(policy => {
+      applyFeaturePolicy(policy);
+      return pywebview.api.get_tab().then(t => {
+        showTab(policy[t] === false ? 'chat' : t);
+        if (policy.schedule !== false) {
+          return pywebview.api.list_schedules().then(renderSchedule);
+        }
+      });
+    }).catch(e => alert('Error initializing feature policy: ' + e));
   } catch (err) {
     alert('pywebviewready error: ' + err);
   }
