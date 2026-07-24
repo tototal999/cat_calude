@@ -316,7 +316,9 @@ def chat(messages: list[dict[str, str]],
         if model not in deployment.models():
             return {'error': '模型不在公司核准清單中。',
                     'context_overflow': False}
-        base = deployment.settings()['base_url']
+        # base_url follows the model, so task routing to a second endpoint
+        # (e.g. gemma) hits its own host rather than the primary one.
+        base = deployment.base_url_for(model)
     else:
         base = str(_get('base_url') or '').strip().rstrip('/')
     if not base:
@@ -387,7 +389,7 @@ def probe(timeout: int | None = None, model: str | None = None) -> str | None:
     if deployment.managed() and not _local_sidecar_active:
         if model not in deployment.models():
             return '模型不在公司核准清單中。'
-        base = deployment.settings()['base_url']
+        base = deployment.base_url_for(model)
     else:
         base = str(_get('base_url') or '').strip().rstrip('/')
     if not base:

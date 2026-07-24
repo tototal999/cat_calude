@@ -143,7 +143,10 @@ claude-cat/
 │   ├── feature-policy-editor.html  # 功能政策管理頁
 │   ├── open-feature-policy-editor.bat
 │   ├── feature_policy_editor.py
-│   └── sop-deck-gen.js             # 依政策產生使用者 SOP 簡報
+│   ├── sop-deck-gen.js             # 依政策產生使用者 SOP 簡報
+│   ├── gen-illustrations.js        # 建置期插圖產生（Gemini 影像模型）
+│   └── illustration-prompts.json   # 插圖提示詞清單
+├── assets/illustrations/           # 產生好的插圖（進版控，重跑簡報不需再呼叫 API）
 ├── feature-policy.json             # 功能政策來源（建置時編譯進 EXE）
 ├── pet/
 │   └── state_machine.py            # PetState 狀態機
@@ -187,6 +190,26 @@ manifest 與建置 log 不放進 `dist\ClaudeCat\`。建置期間產生的 `_bak
 功能政策管理請雙擊 `tools\open-feature-policy-editor.bat`：管理頁會自動載入根目錄的
 `feature-policy.json`，按「儲存並覆蓋原檔」後，再執行上述 `build-release.ps1` 重新發布。
 直接開啟單獨 HTML 時因瀏覽器檔案權限限制，只提供手動載入與下載。
+
+### 使用者 SOP 簡報
+
+```powershell
+node tools\sop-deck-gen.js          # 依 feature-policy.json 過濾後產生 pptx
+```
+
+停用的功能不會出現在簡報中，避免教到使用者按不到的東西。政策異動後請重跑，不要手動改 pptx。
+
+封面與結語的插圖為**建置期**產生，可選：
+
+```powershell
+$env:GEMINI_API_KEY="..."           # 只從環境變數讀，不寫入專案、不進 log
+node tools\gen-illustrations.js     # 已存在的圖會跳過，不重複計費
+```
+
+只送出 `tools\illustration-prompts.json` 裡的提示詞，**不含任何公司文件或使用者資料**；
+產出的 PNG 進版控，之後重跑簡報不需再呼叫 API。沒有金鑰或不能上外網時，簡報照常產出，
+只是少了插圖。提示詞刻意限定通用意象並要求 `no text`——不要讓模型畫產品 UI，
+它會生出不存在的按鈕與亂碼文字，使用者照著找會找不到；UI 一律用真實截圖。
 
 打包版會強制公司 Provider 與 API URL，並將既有外部 URL／非核准模型改回公司設定；使用者仍可
 從頂端選單切換核准的公司模型。Claude／Codex limits 在公司政策中開放，但仍須每位使用者首次同意。

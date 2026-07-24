@@ -7,3 +7,5 @@ frames/jpg/
 config/_baked_policy.py
 config/_baked_deployment.py
 company-defaults.json
+# assets/illustrations/ 刻意「不」忽略：插圖進版控，才能不呼叫 API 重現簡報
+~$*

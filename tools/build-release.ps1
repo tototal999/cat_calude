@@ -15,6 +15,10 @@ $logFile = Join-Path $logDirectory "ClaudeCat-$timestamp.log"
 $manifestFile = Join-Path $projectRoot 'dist\ClaudeCat_release-manifest.json'
 $payloadDirectory = Join-Path $projectRoot 'dist\ClaudeCat'
 $executable = Join-Path $payloadDirectory 'ClaudeCat.exe'
+$userSopName = -join ([char[]](20351, 29992, 32773, 83, 79, 80, 95,
+    25237, 24433, 29256, 46, 112, 112, 116, 120))
+$userSopSource = Join-Path $projectRoot $userSopName
+$userSopTarget = Join-Path $payloadDirectory $userSopName
 $checkDirectory = Join-Path $projectRoot "build\release-check-$timestamp"
 $generatedSources = @(
     (Join-Path $projectRoot 'config\_baked_policy.py'),
@@ -49,9 +53,11 @@ try {
     if ($LASTEXITCODE -ne 0) { throw "Python tests failed with exit code $LASTEXITCODE." }
     $verification += 'python-tests'
 
-    Write-Host 'Step 2/8: Frontend JavaScript syntax'
+    Write-Host 'Step 2/8: Frontend JavaScript syntax and policy routing'
     & node --check frontend\chat.js
     if ($LASTEXITCODE -ne 0) { throw "JavaScript check failed with exit code $LASTEXITCODE." }
+    & node tools\test_frontend_policy.js
+    if ($LASTEXITCODE -ne 0) { throw "Frontend policy test failed with exit code $LASTEXITCODE." }
     $verification += 'frontend-js'
 
     Write-Host 'Step 3/8: PyInstaller onedir build'
@@ -85,9 +91,13 @@ try {
     $verification += 'document-workflow'
 
     Write-Host 'Step 7/8: Release-content policy'
+    # Management files, source policy, and the build-side deck/illustration
+    # generators must never ship inside dist. (Keep this file ASCII-only:
+    # PowerShell 5.1 reads a BOM-less .ps1 as ANSI and mangles non-ASCII.)
     $forbidden = @(Get-ChildItem -LiteralPath $payloadDirectory -File -Recurse | Where-Object {
-        $_.Name -match '^(feature-policy|company-defaults)\.json$' -or
-        $_.Name -match 'feature[_-]policy[_-]editor|open-feature-policy-editor'
+        $_.Name -match '^(feature-policy|company-defaults|illustration-prompts)\.json$' -or
+        $_.Name -match 'feature[_-]policy[_-]editor|open-feature-policy-editor' -or
+        $_.Name -match '^(sop-deck-gen|gen-illustrations)\.js$'
     })
     if ($forbidden) {
         throw "Management or source-policy files leaked into dist: $($forbidden.FullName -join ', ')"
@@ -108,15 +118,31 @@ try {
         $verification += 'gui-smoke'
     } finally {
         $env:LOCALAPPDATA = $originalLocalAppData
-        if ($null -ne $guiProcess -and -not $guiProcess.HasExited) {
-            Stop-Process -Id $guiProcess.Id -Force
-            Wait-Process -Id $guiProcess.Id -ErrorAction SilentlyContinue
-        }
-        foreach ($spawnedProcess in @(Get-Process ClaudeCat -ErrorAction SilentlyContinue)) {
-            Stop-Process -Id $spawnedProcess.Id -Force
-            Wait-Process -Id $spawnedProcess.Id -ErrorAction SilentlyContinue
+        $testProcessIds = @()
+        if ($null -ne $guiProcess) { $testProcessIds += $guiProcess.Id }
+        $testProcessIds += @(Get-Process ClaudeCat -ErrorAction SilentlyContinue |
+            ForEach-Object { $_.Id })
+        foreach ($processId in @($testProcessIds | Select-Object -Unique)) {
+            try {
+                Stop-Process -Id $processId -Force -ErrorAction Stop
+            } catch {
+                if (Get-Process -Id $processId -ErrorAction SilentlyContinue) { throw }
+            }
+            Wait-Process -Id $processId -ErrorAction SilentlyContinue
         }
     }
+
+    Write-Host 'Adding user SOP to release payload'
+    if (-not (Test-Path -LiteralPath $userSopSource -PathType Leaf)) {
+        throw "User SOP was not found: $userSopSource"
+    }
+    Copy-Item -LiteralPath $userSopSource -Destination $userSopTarget -Force
+    $sourceSopHash = (Get-FileHash -LiteralPath $userSopSource -Algorithm SHA256).Hash
+    $targetSopHash = (Get-FileHash -LiteralPath $userSopTarget -Algorithm SHA256).Hash
+    if ($sourceSopHash -ne $targetSopHash) {
+        throw 'Copied user SOP did not match its source file.'
+    }
+    $verification += 'user-sop'
     Write-Host 'Release verification passed.'
 } catch {
     $failure = $_
@@ -153,7 +179,8 @@ $deploymentDocument = Get-Content -LiteralPath $deploymentPath -Raw -Encoding ut
 $disabledFeatures = @($policyDocument.features.PSObject.Properties |
     Where-Object { $_.Value -eq $false } | ForEach-Object { $_.Name })
 $models = @([string]$deploymentDocument.llm.model) +
-    @($deploymentDocument.llm.fallback_models | ForEach-Object { [string]$_ })
+    @($deploymentDocument.llm.fallback_models | ForEach-Object { [string]$_ }) +
+    @($deploymentDocument.llm.endpoints | ForEach-Object { [string]$_.model })
 $models = @($models | Where-Object { $_ } | Select-Object -Unique)
 $payloadFiles = @(Get-ChildItem -LiteralPath $payloadDirectory -File -Recurse)
 $gitCommit = (& git rev-parse HEAD).Trim()
@@ -176,7 +203,11 @@ $manifest = [ordered]@{
     build_log = "build/release-logs/$([IO.Path]::GetFileName($logFile))"
     build_log_sha256 = (Get-FileHash -LiteralPath $logFile -Algorithm SHA256).Hash.ToLowerInvariant()
 }
-$manifest | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $manifestFile -Encoding utf8
+# Set-Content -Encoding utf8 writes a BOM on PowerShell 5.1, and a BOM makes
+# json.load() (and most non-Windows JSON readers) fail. Write UTF-8 without one.
+$manifestJson = $manifest | ConvertTo-Json -Depth 5
+$utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+[System.IO.File]::WriteAllText($manifestFile, $manifestJson, $utf8NoBom)
 
 Write-Host "Release completed: $executable"
 Write-Host "Manifest: $manifestFile"

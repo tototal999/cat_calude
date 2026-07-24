@@ -10,10 +10,12 @@
 
 ### 目前發布快照
 
-- v7.0.0 onedir：81.4 MiB、2,667 個檔案；EXE SHA-256 已與 manifest 核對。
-- 92/92 業務測試與 8/8 發布驗證通過，包含 GUI、公司部署、四格式文件及文件 Workflow。
+- v7.0.3 onedir：81.7 MiB、2,668 個檔案；EXE SHA-256 已與 manifest 核對。
+- 100/100 業務測試與 8/8 發布驗證通過，包含 GUI、公司部署、四格式文件及文件 Workflow。
+- 公司核准模型 2 個（Qwen 預設 + gemma-4-31B-it），連線端點隨模型自動切換。
 - 目前政策停用 JSON、進階模型設定、排程、文件會議包、比較文件與聊天附件；其餘功能維持開放。
 - 發布 log 與 manifest 已產生；正式公司發布仍待程式碼簽章，且本輪 manifest 為 `git_dirty`。
+- **尚未進 EXE**：`frontend/chat.js` 的 PPT 按鈕 H1 條件修正晚於 7.0.3 建置，需重建才會帶到。
 
 ## v7 企業 AI 工作台（2026-07-19，開發中）
 
@@ -54,6 +56,60 @@
   測試請求確認端點接受完整名稱（送出與回報一致）。此後不再依賴端點的別名解析，
   避免未來端點取消別名時出現不易聯想到設定檔的「模型不存在」錯誤。
   註：`config.json` 屬每台電腦的執行期設定，不進版控。
+
+## 模型切換的兩個介面修正（2026-07-24）
+
+- **下拉選單看不清**：`.model-control select` 是 `background: transparent`（為了融入深色
+  topbar），但展開的清單繼承透明背景，WebView2 把未選中項目畫成低對比灰字，使用者回報
+  「可以切換，但太白看不出來」。已補 `.model-control select option` 明確深色底＋亮字
+  （`#eceef0` on `#202225`，對比約 13:1）。其他選單本來就有實心底色，不受影響。
+- **PPT 按鈕條件比後端嚴格**：前端要求回覆含英文字串 `# Slide` 才顯示「📽️ PPT」，
+  但 `worker.py` 實際接受**任何 H1**（`# 標題`）或 `## Slide 標題`。輸出中文 H1 的模型
+  明明能轉檔卻不顯示按鈕。已把前端條件對齊後端解析規則，六種樣本（英文 Slide／中文 H1／
+  `## Slide`／純文字／只有 H2／H1 不在首行）判定與 `worker.py` 一致。
+- 註：實測 gemma 產簡報失敗**不是**上述原因——它回覆只有 `###`（H3），且明說「無法直接
+  輸出實體檔案」，改而提供故事線／Mermaid／VBA 等規劃方法，根本沒產出分頁內容，
+  `worker.py` 對該內容同樣會失敗。前端修正仍保留，因為它修的是另一個真實缺陷。
+- SOP 簡報第 4 頁改為「切換公司核准的模型」：三步驟操作、兩模型並排對照（列出完整模型
+  名稱）、端點自動切換說明，並標註「要一鍵轉出簡報請使用 Qwen」與實測日期。
+  大綱設計原則同步放寬為「不揭露端點網址與憑證，模型名稱可寫出」，避免文件自相矛盾。
+- 產製時發現並修正排版：第 4 頁底部卡片超出投影片下緣並與註腳重疊，已改用兩條提示列；
+  `📽️` emoji 在 LibreOffice 不渲染，改為純文字「PPT 按鈕」。
+
+## 多端點 LLM：Qwen + gemma 可切換（2026-07-23）
+
+- 需求：在打包版新增第二個公司內網端點（gemma-4-31B-it @ hq-ai01:8001/v1），
+  與現有 Qwen 並存、選單可切換，並通過白名單 enforcement。
+- 原架構是「單一 base_url、多模型」，所有模型共用一個端點；新模型在**不同 host**，
+  直接加進 `fallback_models` 會把請求送到錯的 host。
+- 核心設計：**base_url 跟著模型走**。`config/deployment.py` 新增 `base_url_for(model)`
+  與 model→base_url 路由表；`llm_service.chat`／`probe` 送出前用它解析端點，
+  於是任務路由（例如翻譯用 gemma、聊天用 Qwen）也自動命中各自的 host。
+- 設定放**同一份** `company-defaults.json` 的 `llm.endpoints` 清單（`{name,base_url,model}`）；
+  Qwen 維持扁平欄位不動、完全向後相容。
+- 安全性維持：**endpoints 不得帶 api_key**（spec 與 deployment 雙重擋下），
+  沿用「不把金鑰烤進 EXE」原則；keyless 端點送空值（vLLM 不驗 key）。
+  白名單橫跨兩端點；重複模型、loopback URL、非布林等皆在 spec/deployment 驗證期擋下。
+- 6 個檔：`company-defaults.json`、`ClaudeCat.spec`、`config/deployment.py`、
+  `config/settings.py`、`backend/services/llm_service.py`、`test_logic.py`。
+- 驗證：`test_logic.py` 100 通過（新增 8 條 endpoint 路由／驗證回歸）；重建 EXE 7.0.2，
+  建置期印出 `2 allowed model(s), 1 extra endpoint(s)`，8 步驗證全過；
+  實測 `base_url_for('gemma-4-31B-it')` → gemma host、`base_url_for(Qwen)` → Qwen host。
+- 順帶修正 `build-release.ps1`：manifest 的 `allowed_model_count` 原本漏算 endpoints
+  （只數主端點），已補上；本份 7.0.2 manifest 已就地更正為 2。
+
+## 修正：每隔數分鐘閃出主控台視窗（2026-07-22）
+
+- 症狀：執行 ClaudeCat 後每隔幾分鐘會開一個 cmd／主控台視窗再自動關閉。
+- 根因：Codex 用量輪詢每 `poll_interval`（預設 180 秒）呼叫一次
+  `subprocess.Popen([codex.exe, 'app-server', '--stdio'])`，**未加 `CREATE_NO_WINDOW`**。
+  `codex.exe` 是主控台程式，從 `--noconsole` 的 GUI 程式啟動時 Windows 會配一個主控台視窗。
+  log 可見 `codex limits updated` 每 3 分鐘一筆，與症狀時間吻合。
+- 同時修正另外兩處同類問題：`api.py` 的 `claude --version` 與 `cat.py` 的 `claude update`，
+  兩者都用 `shell=True`（在 Windows 等於開 cmd.exe），也缺旗標。
+- 已掃描全專案，確認再無未加 `creationflags` 的 `subprocess.run/Popen`（測試與驗證腳本除外，
+  那些本來就在主控台執行）。
+- 只有在 Claude／Codex 用量開啟時才會觸發；此前政策預設關閉，所以先前未被發現。
 
 ## 公司功能政策（2026-07-21）
 
@@ -102,7 +158,7 @@
 - 用量徽章同時顯示 Claude／Codex 時改為上下兩行，避免徽章過寬；Codex app-server 的安全錯誤訊息會直接顯示，便於判斷是否需要重新登入。
 - 2026-07-19 第二輪人工驗收：拖曳位置持久化、點擊快速提問、Skin 切換持久化、排程 60 秒自動收合、用量 OFF 零請求、閒置睡眠／驚醒與所有工具頁停靠均通過。Esc 原回報經真正的 Windows `VK_ESCAPE` 驗證為工具注入限制造成的假陽性，保留輸入框 Esc 綁定作防禦性處理。另發現最大化工具頁關閉後桌寵會以縮小時座標還原而出界；已補啟動、拖曳、尺寸還原與徽章的夾邊（`_clamp_pet_position()`），同日人工複驗通過：開排程→最大化→關閉後桌寵落在 (1238,640)-(1366,768)，完整留在 1366x768 畫面內，徽章亦被夾住。
 - 修正第三輪審查：文件檢索改用 CJK 詞組與最低相關門檻；長文件摘要／比較改為跨全文抽樣並明示非完整涵蓋；Word 表格與 Excel 欄標題會隨證據保留。翻譯以佔位符實際鎖定程式碼／SQL／識別碼，模型未完整保留即回報錯誤。
-- 驗證：Python 3.11 `test_logic.py` **92/92** 通過（含管理政策直接覆蓋的嚴格驗證、公司端點／模型白名單、Workflow、文件、翻譯、排程與桌寵回歸）；`node --check frontend/chat.js`、`git diff --check`、打包文件／Workflow 與 8 秒 GUI 煙霧測試通過。實際內網語意品質仍待使用者環境確認。
+- 驗證：Python 3.11 `test_logic.py` **100/100** 通過（含管理政策直接覆蓋的嚴格驗證、公司端點／模型白名單、Workflow、文件、翻譯、排程與桌寵回歸）；`node --check frontend/chat.js`、`git diff --check`、打包文件／Workflow 與 8 秒 GUI 煙霧測試通過。實際內網語意品質仍待使用者環境確認。
 
 ### v6.2 尚待完成的實機項目
 

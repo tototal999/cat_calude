@@ -217,9 +217,12 @@ def _user_agent() -> str:
     import re
     import subprocess
     try:
+        # shell=True on Windows runs this through cmd.exe; without
+        # CREATE_NO_WINDOW the windowed build flashes a console window.
         out = subprocess.run(
             ['claude', '--version'],
             capture_output=True, text=True, timeout=10, shell=(os.name == 'nt'),
+            creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0,
         ).stdout
         match = re.search(r'(\d+\.\d+\.\d+)', out or '')
         _cached_user_agent = f'claude-code/{match.group(1)}' if match else _FALLBACK_USER_AGENT

@@ -8,6 +8,18 @@ const path = require("path");
 const POLICY_PATH = path.join(__dirname, "..", "feature-policy.json");
 const F = JSON.parse(fs.readFileSync(POLICY_PATH, "utf8")).features || {};
 const on = id => F[id] !== false;
+
+// 建置期插圖（tools/gen-illustrations.js 產生）。沒有圖時整份簡報照常產出，
+// 只是少了裝飾——IT 機器沒有金鑰或不能上外網時不該整個壞掉。
+const ART_DIR = path.join(__dirname, "..", "assets", "illustrations");
+const art = id => {
+  // 影像 API 目前只回 JPEG；保留 PNG 以便日後換格式或手工替換素材
+  for (const ext of ["png", "jpg"]) {
+    const f = path.join(ART_DIR, `${id}.${ext}`);
+    if (fs.existsSync(f)) return f;
+  }
+  return null;
+};
 console.log("政策：關閉 =", Object.keys(F).filter(k => !F[k]).join(", ") || "(無)");
 
 
@@ -78,21 +90,29 @@ function note(slide, text, y = 6.55, color) {
 function cover(slide, o) {
   slide.background = { color: T.navy };
   slide.addShape(p.ShapeType.rect, { x: 0, y: 0, w: 0.16, h: H, fill: { color: T.violet }, line: { type: "none" } });
+  const img = art("cover");
+  // 有插圖時文字讓出右半邊，避免壓在圖上
+  const tw = img ? 6.9 : 11.5;
+  if (img) slide.addImage({ path: img, x: 8.55, y: 1.95, w: 3.6, h: 3.6 });
   slide.addShape(p.ShapeType.rect, { x: 1.1, y: 2.05, w: 0.85, h: 0.14, fill: { color: T.violet }, line: { type: "none" } });
-  slide.addText(o.kicker, { x: 1.1, y: 2.4, w: 10, h: 0.5, fontFace: T.fontCJK, fontSize: 16, color: "B7B8CE", margin: 0 });
+  slide.addText(o.kicker, { x: 1.1, y: 2.4, w: tw, h: 0.5, fontFace: T.fontCJK, fontSize: 16, color: "B7B8CE", margin: 0 });
   slide.addText([
     { text: o.titleTop, options: { breakLine: true, color: T.white } },
     { text: o.titleBottom, options: { color: T.primaryLt } },
-  ], { x: 1.1, y: 3.0, w: 11.5, h: 1.9, fontFace: T.fontCJK, fontSize: 46, bold: true, lineSpacingMultiple: 1.06, margin: 0 });
-  slide.addText(o.subtitle, { x: 1.1, y: 5.05, w: 11.5, h: 0.5, fontFace: T.fontCJK, fontSize: 17, color: "AAABCB", margin: 0 });
-  slide.addText(o.date, { x: 1.1, y: 5.75, w: 8, h: 0.4, fontFace: T.fontCJK, fontSize: 14, color: T.primaryLt, bold: true, margin: 0 });
+  ], { x: 1.1, y: 3.0, w: tw, h: 1.9, fontFace: T.fontCJK, fontSize: 46, bold: true, lineSpacingMultiple: 1.06, margin: 0 });
+  slide.addText(o.subtitle, { x: 1.1, y: 5.05, w: tw, h: 0.5, fontFace: T.fontCJK, fontSize: 17, color: "AAABCB", margin: 0 });
+  slide.addText(o.date, { x: 1.1, y: 5.75, w: tw, h: 0.4, fontFace: T.fontCJK, fontSize: 14, color: T.primaryLt, bold: true, margin: 0 });
 }
 function closing(slide, o) {
   slide.background = { color: T.navy };
   slide.addShape(p.ShapeType.rect, { x: 0, y: 0, w: 0.16, h: H, fill: { color: T.violet }, line: { type: "none" } });
-  slide.addText(o.kicker, { x: M, y: 2.2, w: W - 2 * M, h: 0.5, fontFace: T.fontCJK, fontSize: 16, color: "9A9CB5", align: "center", margin: 0 });
-  slide.addText(o.headline, { x: M, y: 2.8, w: W - 2 * M, h: 1.2, fontFace: T.fontCJK, fontSize: 40, bold: true, color: T.white, align: "center", margin: 0 });
-  slide.addText(o.footnote, { x: M, y: 4.35, w: W - 2 * M, h: 0.6, fontFace: T.fontCJK, fontSize: 17, color: T.primaryLt, align: "center", margin: 0 });
+  const img = art("closing");
+  // 有插圖時整組文字下移，讓圖置中在上方
+  const dy = img ? 0.85 : 0;
+  if (img) slide.addImage({ path: img, x: (W - 2.1) / 2, y: 1.05, w: 2.1, h: 2.1 });
+  slide.addText(o.kicker, { x: M, y: 2.2 + dy, w: W - 2 * M, h: 0.5, fontFace: T.fontCJK, fontSize: 16, color: "9A9CB5", align: "center", margin: 0 });
+  slide.addText(o.headline, { x: M, y: 2.8 + dy, w: W - 2 * M, h: 1.2, fontFace: T.fontCJK, fontSize: 40, bold: true, color: T.white, align: "center", margin: 0 });
+  slide.addText(o.footnote, { x: M, y: 4.35 + dy, w: W - 2 * M, h: 0.6, fontFace: T.fontCJK, fontSize: 17, color: T.primaryLt, align: "center", margin: 0 });
 }
 
 /* ================= 1. 封面 ================= */
@@ -113,7 +133,8 @@ frame(s, "ClaudeCat 能做什麼（1／2）");
 s.addText("多數同事無法直接上外網使用 LLM。ClaudeCat 把公司已提供的內網 AI 整合到桌面貓咪中，不必另開網頁、命令列或模型程式。",
   { x: M + 0.35, y: 1.25, w: W - 2 * M - 0.5, h: 0.5, fontFace: T.fontCJK, fontSize: 15, color: T.muted, valign: "middle", margin: 0 });
 {
-  const chatLines = ["右鍵 →「交談（LLM 介面）…」", "多輪對話、對話紀錄、匯出 Markdown"];
+  const chatLines = ["右鍵 →「交談（LLM 介面）…」", "多輪對話、對話紀錄、匯出 Markdown",
+                     "頂端選單可切換公司核准的模型"];
   const extra = [on("chat.attachments") ? "附件分析" : null,
                  on("chat.export_pptx") ? "簡報大綱匯出 PPTX" : null].filter(Boolean);
   if (extra.length) chatLines.push(extra.join("、"));
@@ -144,20 +165,28 @@ note(s, "使用邊界：聊天與文件回答使用公司設定的內網 LLM。"
 
 /* ========= 4. 目前使用的模型 ========= */
 s = p.addSlide();
-frame(s, "目前使用的模型");
-let y = lead(s, "使用公司設定的內網模型，使用者不需選擇");
-card(s, { x: M + 0.35, y: y + 0.1, w: 11.6, h: 2.45, title: "使用者不必做的事", lines: [
-  "不需要外網帳號、API Key，也不需要自行挑選模型",
-  "聊天、文件問答與翻譯都使用公司統一的預設模型",
-  "模型以直接、快速產出回答為主",
-], bodySize: 15.5 });
-card(s, { x: M + 0.35, y: y + 2.75, w: 11.6, h: 2.05, title: "哪些功能不呼叫模型", lines: [
-  on("json") && "JSON 的格式化、驗證、搜尋與 JSONPath 為本機確定性工具",
-  (on("usage.claude") || on("usage.codex"))
-    ? "Claude／Codex 用量僅是可選顯示，聊天不會呼叫 Claude 或 Codex"
-    : "聊天與文件功能只使用公司內網模型",
-].filter(Boolean), bodySize: 15.5 });
-note(s, "本簡報不列出內網網址、模型名稱、API Key 或其他連線憑證。", 6.75);
+frame(s, "切換公司核准的模型");
+let y = lead(s, "在交談介面頂端切換，不必自行設定連線");
+steps(s, [
+  "右鍵點貓咪，選「交談（LLM 介面）…」。",
+  "在視窗頂端的模型選單挑選要用的模型。",
+  "選好即刻生效，並會記住到下次開啟。",
+], { y: y + 0.02, gap: 0.62, size: 15 });
+cardGrid(s, [
+  { title: "Qwen（預設）", lines: [
+    "Qwen/Qwen3.6-35B-A3B-FP8-nothink",
+    "要簡報大綱時直接產出分頁內容",
+    on("chat.export_pptx") && "隨即出現 PPT 按鈕可一鍵轉檔"].filter(Boolean) },
+  { title: "gemma-4-31B-it", lines: [
+    "傾向先回覆規劃方法與建議工具",
+    "（故事線、Mermaid、VBA 腳本）",
+    on("chat.export_pptx") && "不直接產出分頁，不會出現 PPT 按鈕"].filter(Boolean) },
+], { y0: y + 2.05, h: 1.95, gapY: 2.05 });
+// 用兩條提示列取代第三張卡片：卡片會超出投影片下緣
+note(s, "連線端點自動跟著模型切換；只能在公司核准清單內選擇，不需外網帳號或 API Key。", 6.05);
+if (on("chat.export_pptx")) {
+  note(s, "要一鍵轉出簡報請使用 Qwen（2026-07-24 實測；模型行為可能隨版本改變）。", 6.7);
+}
 
 /* ========= 5. Agenda ========= */
 s = p.addSlide();
@@ -165,6 +194,7 @@ frame(s, "Agenda");
 steps(s, [
   on("quick_question") && "快速提問與長回答",
   "切換到 LLM 交談介面",
+  "切換公司核准的模型",
   on("documents") && "分析文件、文件問答與來源引用",
   on("documents.meeting_pack") && "文件會議包：一鍵產出可交付的 Markdown",
   "桌寵管理、Skin" + (on("schedule") ? "、排程" : "") + "與安全結束",
