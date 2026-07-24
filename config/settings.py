@@ -82,8 +82,15 @@ def merge_config(patch: dict) -> dict:
 
 
 def apply_company_deployment(llm_defaults: dict) -> bool:
-    """Force the packaged company endpoint while preserving an allowed model."""
-    allowed_models = [llm_defaults['model'], *llm_defaults['fallback_models']]
+    """Force the packaged company endpoints while preserving an allowed model."""
+    primary_fallbacks = list(llm_defaults['fallback_models'])
+    # Models that share the flat base_url; these rotate so the dropdown never
+    # loses one when a fallback is selected.
+    primary_models = [llm_defaults['model'], *primary_fallbacks]
+    endpoint_models = [e['model'] for e in llm_defaults.get('endpoints', [])]
+    # Whitelist spans every endpoint's model; base_url is resolved per-model at
+    # call time (llm_service.chat), so the flat base_url here is just the default.
+    allowed_models = [*primary_models, *endpoint_models]
 
     global config
     with _config_lock:
@@ -95,9 +102,20 @@ def apply_company_deployment(llm_defaults: dict) -> bool:
         selected = str(llm_config.get('model') or '').strip()
         if selected not in allowed_models:
             selected = allowed_models[0]
-        enforced = dict(llm_defaults)
-        enforced['model'] = selected
-        enforced['fallback_models'] = [m for m in allowed_models if m != selected]
+        if selected in primary_models:
+            # Rotate within the primary host so every primary model stays listed.
+            new_fallbacks = [m for m in primary_models if m != selected]
+        else:
+            # An extra-endpoint model is selected; leave the primary set intact.
+            new_fallbacks = list(primary_fallbacks)
+        enforced = {
+            'provider': llm_defaults['provider'],
+            'base_url': llm_defaults['base_url'],
+            'model': selected,
+            'fallback_models': new_fallbacks,
+            'request_timeout': llm_defaults['request_timeout'],
+            'endpoints': llm_defaults.get('endpoints', []),
+        }
         for key in ('model_modes', 'task_models'):
             routes = llm_config.get(key)
             if isinstance(routes, dict):

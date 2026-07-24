@@ -1267,6 +1267,8 @@ class ClaudeCat:
                 subprocess.run(
                     ['claude', 'update'],
                     capture_output=True, timeout=120, shell=(sys.platform == 'win32'),
+                    creationflags=(subprocess.CREATE_NO_WINDOW
+                                   if sys.platform == 'win32' else 0),
                 )
             except Exception:
                 logger.exception('token refresh failed')

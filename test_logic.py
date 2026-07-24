@@ -568,6 +568,31 @@ class SettingsTests(unittest.TestCase):
         self.assertEqual(data['llm']['fallback_models'], ['company-a'])
         self.assertEqual(data['llm']['task_models'], {})
 
+    def test_company_deployment_accepts_an_extra_endpoint_model(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            config_path = root / 'config.json'
+            config_path.write_text(json.dumps({
+                'llm': {'model': 'gemma-4-31B-it'},   # user picked the 2nd endpoint
+            }), encoding='utf-8')
+            company = deployment._validate({
+                'base_url': 'http://qwen.test/v1',
+                'model': 'Qwen-primary',
+                'fallback_models': [],
+                'request_timeout': 120,
+                'endpoints': [{'name': 'gemma4-31b',
+                               'base_url': 'http://gemma.test/v1',
+                               'model': 'gemma-4-31B-it'}],
+            })
+            with patch.object(settings, 'CONFIG_FILE', config_path), \
+                 patch.object(settings, 'config', {}):
+                settings.apply_company_deployment(company)
+                data = json.loads(config_path.read_text(encoding='utf-8'))
+        # Selection preserved; gemma is NOT dumped into the primary fallbacks.
+        self.assertEqual(data['llm']['model'], 'gemma-4-31B-it')
+        self.assertEqual(data['llm']['fallback_models'], [])
+        self.assertEqual(data['llm']['endpoints'][0]['name'], 'gemma4-31b')
+
     def test_deployment_rejects_loopback_and_invalid_models(self):
         with self.assertRaises(deployment.DeploymentError):
             deployment._validate({
@@ -1175,6 +1200,70 @@ class FeaturePolicyTests(unittest.TestCase):
         from backend.routes import api as api_module
         for name in api_module._GATED_METHODS:
             self.assertTrue(hasattr(api_module.JsApi, name), name)
+
+
+class DeploymentEndpointTests(unittest.TestCase):
+    """Multi-endpoint routing: base_url must follow the selected model."""
+
+    BASE = {
+        'base_url': 'http://qwen.example.com:8000/LLM/v1',
+        'model': 'Qwen/Qwen3.6-35B-A3B-FP8-nothink',
+        'fallback_models': [],
+        'request_timeout': 120,
+        'endpoints': [
+            {'name': 'gemma4-31b', 'base_url': 'http://gemma.example.com:8001/v1',
+             'model': 'gemma-4-31B-it'},
+        ],
+    }
+
+    def tearDown(self):
+        deployment._llm = None
+
+    def test_models_span_every_endpoint(self):
+        deployment._llm = deployment._validate(self.BASE)
+        self.assertEqual(
+            deployment.models(),
+            ['Qwen/Qwen3.6-35B-A3B-FP8-nothink', 'gemma-4-31B-it'])
+
+    def test_base_url_follows_the_model(self):
+        deployment._llm = deployment._validate(self.BASE)
+        self.assertEqual(deployment.base_url_for('gemma-4-31B-it'),
+                         'http://gemma.example.com:8001/v1')
+        self.assertEqual(deployment.base_url_for('Qwen/Qwen3.6-35B-A3B-FP8-nothink'),
+                         'http://qwen.example.com:8000/LLM/v1')
+
+    def test_unknown_model_falls_back_to_primary_host(self):
+        deployment._llm = deployment._validate(self.BASE)
+        self.assertEqual(deployment.base_url_for('nope'),
+                         'http://qwen.example.com:8000/LLM/v1')
+
+    def test_endpoint_may_not_carry_an_api_key(self):
+        bad = dict(self.BASE)
+        bad['endpoints'] = [{'name': 'x', 'base_url': 'http://h.example.com:1/v1',
+                             'model': 'm', 'api_key': 'secret'}]
+        with self.assertRaises(deployment.DeploymentError):
+            deployment._validate(bad)
+
+    def test_duplicate_model_across_endpoints_is_rejected(self):
+        bad = dict(self.BASE)
+        bad['endpoints'] = [{'name': 'x', 'base_url': 'http://h.example.com:1/v1',
+                             'model': 'Qwen/Qwen3.6-35B-A3B-FP8-nothink'}]
+        with self.assertRaises(deployment.DeploymentError):
+            deployment._validate(bad)
+
+    def test_loopback_endpoint_url_is_rejected(self):
+        bad = dict(self.BASE)
+        bad['endpoints'] = [{'name': 'x', 'base_url': 'http://127.0.0.1:1/v1',
+                             'model': 'm'}]
+        with self.assertRaises(deployment.DeploymentError):
+            deployment._validate(bad)
+
+    def test_no_endpoints_key_still_works(self):
+        plain = {k: v for k, v in self.BASE.items() if k != 'endpoints'}
+        deployment._llm = deployment._validate(plain)
+        self.assertEqual(deployment.models(), ['Qwen/Qwen3.6-35B-A3B-FP8-nothink'])
+        self.assertEqual(deployment.base_url_for('anything'),
+                         'http://qwen.example.com:8000/LLM/v1')
 
 
 if __name__ == '__main__':
