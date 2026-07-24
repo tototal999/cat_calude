@@ -15,8 +15,8 @@ $logFile = Join-Path $logDirectory "ClaudeCat-$timestamp.log"
 $manifestFile = Join-Path $projectRoot 'dist\ClaudeCat_release-manifest.json'
 $payloadDirectory = Join-Path $projectRoot 'dist\ClaudeCat'
 $executable = Join-Path $payloadDirectory 'ClaudeCat.exe'
-$userSopName = -join ([char[]](20351, 29992, 32773, 83, 79, 80, 95,
-    25237, 24433, 29256, 46, 112, 112, 116, 120))
+$userSopName = -join ([char[]](26700, 23541, 33287, 76, 76, 77,
+    46, 112, 112, 116, 120))
 $userSopSource = Join-Path $projectRoot $userSopName
 $userSopTarget = Join-Path $payloadDirectory $userSopName
 $checkDirectory = Join-Path $projectRoot "build\release-check-$timestamp"
