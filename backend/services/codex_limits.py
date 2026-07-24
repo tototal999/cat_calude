@@ -65,10 +65,14 @@ def fetch_usage() -> dict[str, Any]:
 
 
 def _request_rate_limits(executable: Path) -> dict[str, Any]:
+    # codex.exe is a console app; without this flag the windowed build pops a
+    # console window on every poll (user-reported: "a cmd window opens and
+    # closes every few minutes").
+    creationflags = subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
     process = subprocess.Popen(
         [str(executable), 'app-server', '--stdio'],
         stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-        text=True, encoding='utf-8', bufsize=1,
+        text=True, encoding='utf-8', bufsize=1, creationflags=creationflags,
     )
     assert process.stdin is not None and process.stdout is not None
     lines: queue.Queue[str | None] = queue.Queue()

@@ -1,0 +1,18 @@
+{
+  "_comment": "建置期插圖清單。只放通用意象，絕不要求生成 UI 畫面（AI 會畫出不存在的按鈕與糊掉的文字，使用者照著找會找不到）。提示詞一律要求 no text，因為生成的文字幾乎必定是亂碼。API 目前只接受 image/jpeg，JPEG 無透明度，因此提示詞指定深藍底以貼合投影片背景。",
+  "_model": "gemini-3.1-flash-image",
+  "_style": "flat vector illustration, electric violet #5B4FE8 on deep navy #0D0E2B, minimal, generous negative space, no text",
+  "images": [
+    {
+      "id": "cover",
+      "aspect_ratio": "1:1",
+      "prompt": "Flat vector illustration of a friendly stylised cat sitting beside a glowing document, on a deep navy background. Single accent colour: electric violet #5B4FE8 with soft lighter violet highlights. Minimal geometric shapes, generous negative space, centred composition, subtle glow. Absolutely no text, no letters, no words, no numbers, no user interface, no buttons, no screens."
+    },
+    {
+      "id": "closing",
+      "aspect_ratio": "1:1",
+      "prompt": "Flat vector illustration of a small stylised cat curled up asleep, on a deep navy background. Single accent colour: electric violet #5B4FE8. Very minimal, calm, rounded geometric shapes, generous negative space. Absolutely no text, no letters, no words, no numbers, no user interface, no buttons, no screens."
+    }
+  ],
+  "_mime_type": "image/jpeg"
+}

@@ -86,6 +86,27 @@ def _acquire_single_instance_lock() -> bool:
     _mutex_handle = handle  # keep alive for the process lifetime, released on exit
     return True
 
+
+def _wake_existing_instance() -> None:
+    """Bring the already-running instance's cat to the front instead of just
+    exiting, so a second launch reads as "there it is" rather than "nothing
+    happened" (user-reported: the exe looked like it wouldn't run).
+
+    Cross-process, so this can only drive the OS-level window - it cannot
+    call into the other process's Tk objects. ``self.root.title('ClaudeCat')``
+    is set once, on the main window only, so the title match is unambiguous.
+    """
+    try:
+        hwnd = ctypes.windll.user32.FindWindowW(None, 'ClaudeCat')
+        if not hwnd:
+            logger.info('could not find the running instance\'s window to wake')
+            return
+        SW_SHOW = 5
+        ctypes.windll.user32.ShowWindow(hwnd, SW_SHOW)
+        ctypes.windll.user32.SetForegroundWindow(hwnd)
+    except Exception:
+        logger.exception('could not wake existing instance')
+
 # ---- Tunables (edit here, no config file by design) -----------------------
 POLL_INTERVAL = 180          # seconds; do NOT go lower (endpoint 429s hard)
 QUOTA_FIELD = 'five_hour'    # which quota drives the cat (session usage)
@@ -944,30 +965,31 @@ class ClaudeCat:
         messagebox.showinfo('清除記錄', '記錄已清除。', parent=self.root)
 
     def _effective_error(self) -> str | None:
-        """Real error, or a debug-menu override for previewing that state."""
+        """Real error, or a debug-menu override for previewing that state.
+
+        Pet animation follows Claude usage only - Codex is badge-only info,
+        never drives poses/speed (user-reported: Codex hitting 100% shouldn't
+        put the cat to sleep)."""
         if self.debug_state.get() == 'error':
             return 'DEBUG: forced error'
         if self._effective_usage() is not None:
             return None
         if self.monitor_enabled.get() and self.error:
             return self.error
-        if self.codex_limits_enabled.get() and self.codex_error:
-            return self.codex_error
         return None
 
     def _effective_usage(self) -> float | None:
-        """Real usage %, or a debug-menu override for previewing that state."""
+        """Real usage %, or a debug-menu override for previewing that state.
+
+        Claude only - see _effective_error for why Codex is excluded."""
         ds = self.debug_state.get()
         if ds == 'error':
             return None
         if ds == 'full':
             return 100.0
-        values = []
         if self.monitor_enabled.get() and self.usage_pct is not None:
-            values.append(self.usage_pct)
-        if self.codex_limits_enabled.get() and self.codex_usage_pct is not None:
-            values.append(self.codex_usage_pct)
-        return max(values) if values else None
+            return self.usage_pct
+        return None
 
     def _status_text(self) -> str:
         """Short status line for the menu's top (disabled) entry - same
@@ -1058,9 +1080,9 @@ class ClaudeCat:
 
     def _monitor_active(self) -> bool:
         """Monitor drives poses/speed only when ON - except the Test menu,
-        which may preview any state regardless of the toggle."""
-        return self.monitor_enabled.get() or self.codex_limits_enabled.get() \
-            or self.debug_state.get() != 'live'
+        which may preview any state regardless of the toggle. Codex alone
+        does not activate it; the pet only reacts to Claude usage."""
+        return self.monitor_enabled.get() or self.debug_state.get() != 'live'
 
     def _should_sleep(self) -> bool:
         """Sleep pose wins over the run cycle when the session quota is fully used up (100%),
@@ -1267,6 +1289,8 @@ class ClaudeCat:
                 subprocess.run(
                     ['claude', 'update'],
                     capture_output=True, timeout=120, shell=(sys.platform == 'win32'),
+                    creationflags=(subprocess.CREATE_NO_WINDOW
+                                   if sys.platform == 'win32' else 0),
                 )
             except Exception:
                 logger.exception('token refresh failed')
@@ -1357,10 +1381,12 @@ if __name__ == '__main__':
         sys.exit(1)
 
     if not _acquire_single_instance_lock():
-        # Silent exit: a withdrawn Tk root can't reliably host a modal
-        # messagebox (it may not block/show at all on some setups), and
-        # the user already has a cat on screen - no need to interrupt them.
-        logger.info('another instance is already running; exiting')
+        # A modal messagebox isn't reliable here (a withdrawn Tk root may not
+        # block/show it on some setups), so wake the running instance's window
+        # instead of just exiting silently - a second launch should read as
+        # "there it is", not "nothing happened".
+        logger.info('another instance is already running; waking it')
+        _wake_existing_instance()
         sys.exit(0)
 
     import backend.window_main as chatwin
