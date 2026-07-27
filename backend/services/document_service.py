@@ -151,12 +151,14 @@ def _extract_pptx(path: Path) -> list[dict]:
     chunks = []
     for slide_no, slide in enumerate(Presentation(path).slides, start=1):
         text_parts = [shape.text.strip() for shape in slide.shapes if hasattr(shape, 'text') and shape.text.strip()]
-        if not text_parts:
-            continue
         title = slide.shapes.title.text.strip() if slide.shapes.title and slide.shapes.title.text else ''
         locator = f'投影片 {slide_no}' + (f' · {title}' if title else '')
-        chunks.append({'text': '\n'.join(text_parts), 'source': _source(
-            'powerpoint_slide', locator, slide=slide_no, heading=title)})
+        text_extracted = bool(text_parts)
+        text = '\n'.join(text_parts) if text_parts else (
+            '此投影片沒有可擷取文字；圖片與圖表未分析。')
+        chunks.append({'text': text, 'source': _source(
+            'powerpoint_slide', locator, slide=slide_no, heading=title,
+            text_extracted=text_extracted)})
     if not chunks:
         raise ValueError('PowerPoint 沒有可擷取文字。')
     return chunks
@@ -313,7 +315,7 @@ def query(document_id: str, question: str, limit: int = 3) -> dict:
     return {'answer': '找到下列與問題相關的文件內容：', 'sources': sources}
 
 
-def context(document_id: str, limit: int = 12) -> dict:
+def context(document_id: str, limit: int | None = 12) -> dict:
     """Return bounded, source-bearing evidence for document-wide actions.
 
     A bounded context cannot be a complete reading of a long document.  Sample
@@ -324,7 +326,7 @@ def context(document_id: str, limit: int = 12) -> dict:
     if document is None:
         return {'error': '找不到文件索引。'}
     chunks = document['chunks']
-    if len(chunks) <= limit:
+    if limit is None or len(chunks) <= limit:
         selected = chunks
     else:
         selected = [chunks[round(index * (len(chunks) - 1) / (limit - 1))]
@@ -342,5 +344,9 @@ def context(document_id: str, limit: int = 12) -> dict:
             'included_chunks': len(sources),
             'total_chunks': len(chunks),
             'complete': len(sources) == len(chunks),
+            'unit': '張投影片' if document.get('suffix') == '.pptx' else '個文件區塊',
+            'limited_chunks': sum(
+                1 for chunk in chunks
+                if chunk['source'].get('text_extracted') is False),
         },
     }
