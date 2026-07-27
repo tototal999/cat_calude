@@ -18,6 +18,80 @@ import backend.window_main as wm
 
 logger = logging.getLogger('claudecat')
 
+FULL_PRESENTATION_BATCH_SIZE = 6
+
+
+def _full_presentation_summary(document_id):
+    evidence = documents.context(document_id, limit=None)
+    if evidence.get('error'):
+        return evidence
+    sources = evidence['sources']
+    if not sources or any(
+            item['source'].get('kind') != 'powerpoint_slide'
+            for item in sources):
+        return {'error': '完整分析目前僅支援 PPTX。'}
+
+    model = llm.model_for_task('document', wm._current_model)
+    batch_summaries = []
+    processed = 0
+    total_batches = (len(sources) + FULL_PRESENTATION_BATCH_SIZE - 1) // FULL_PRESENTATION_BATCH_SIZE
+    for offset in range(0, len(sources), FULL_PRESENTATION_BATCH_SIZE):
+        batch = sources[offset:offset + FULL_PRESENTATION_BATCH_SIZE]
+        batch_number = len(batch_summaries) + 1
+        source_text = '\n\n'.join(
+            f'[{item["source"]["document_name"]} · {item["source"].get("locator", "未知位置")}]\n'
+            f'{item["excerpt"]}'
+            for item in batch)
+        result = llm.chat([
+            {'role': 'system', 'content': (
+                '你是公司文件助手。請逐張整理提供的投影片文字，只能使用來源內容，'
+                '保留投影片編號、關鍵事實與待確認事項，不可補充外部知識。')},
+            {'role': 'user', 'content': (
+                f'這是完整分析的第 {batch_number}/{total_batches} 批。\n\n{source_text}')},
+        ], model=model, timeout=180)
+        if result.get('error'):
+            coverage = dict(evidence.get('coverage', {}))
+            coverage.update({
+                'included_chunks': processed,
+                'total_chunks': len(sources),
+                'complete': False,
+            })
+            return {
+                'error': f'完整分析未完成：第 {batch_number}/{total_batches} 批失敗：{result["error"]}',
+                'sources': sources[:processed],
+                'coverage': coverage,
+            }
+        batch_summaries.append(result['content'])
+        processed += len(batch)
+
+    summaries_text = '\n\n'.join(
+        f'第 {index}/{total_batches} 批摘要：\n{summary}'
+        for index, summary in enumerate(batch_summaries, start=1))
+    final = llm.chat([
+        {'role': 'system', 'content': (
+            '你是公司文件助手。請將所有批次摘要整合成一份完整簡報分析，'
+            '涵蓋主題、重點、決策、風險與後續行動；不可省略批次或補充外部知識。')},
+        {'role': 'user', 'content': summaries_text},
+    ], model=model, timeout=180)
+    if final.get('error'):
+        coverage = dict(evidence.get('coverage', {}))
+        coverage.update({
+            'included_chunks': len(sources),
+            'total_chunks': len(sources),
+            'complete': False,
+        })
+        return {
+            'error': f'完整分析未完成：最終彙整失敗：{final["error"]}',
+            'sources': sources,
+            'coverage': coverage,
+        }
+    return {
+        'answer': final['content'],
+        'sources': sources,
+        'coverage': evidence['coverage'],
+        'company_llm_used': True,
+    }
+
 
 def _session_path(session_id):
     """Return the session file for a canonical UUID, or None for invalid input."""
@@ -176,6 +250,8 @@ class JsApi:
         return evidence
 
     def document_action(self, document_id, action):
+        if action == 'full_summary':
+            return _full_presentation_summary(document_id)
         actions = {
             'summary': '以條列方式摘要這份文件的重點、適用對象與注意事項。',
             'sop': '整理這份文件中明確描述的流程或 SOP，按順序列出；未描述的步驟不可補充。',

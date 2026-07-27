@@ -670,6 +670,32 @@ class DocumentServiceTests(unittest.TestCase):
             self.assertEqual(evidence['coverage']['included_chunks'], 3)
             self.assertEqual(evidence['sources'][-1]['excerpt'], '第 19 段內容')
 
+    def test_presentation_context_counts_slides_without_extractable_text(self):
+        from pptx import Presentation
+        from pptx.util import Inches
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / 'deck.pptx'
+            deck = Presentation()
+            first = deck.slides.add_slide(deck.slide_layouts[6])
+            first.shapes.add_textbox(
+                Inches(1), Inches(1), Inches(4), Inches(1)).text = 'First slide'
+            deck.slides.add_slide(deck.slide_layouts[6])
+            third = deck.slides.add_slide(deck.slide_layouts[6])
+            third.shapes.add_textbox(
+                Inches(1), Inches(1), Inches(4), Inches(1)).text = 'Third slide'
+            deck.save(source)
+            with patch.object(documents, 'DOCUMENTS_DIR', root / 'documents'):
+                result = documents.ingest(str(source))
+                evidence = documents.context(
+                    result['document']['id'], limit=None)
+        self.assertEqual(evidence['coverage']['total_chunks'], 3)
+        self.assertEqual(evidence['coverage']['limited_chunks'], 1)
+        self.assertEqual(
+            [item['source']['slide'] for item in evidence['sources']],
+            [1, 2, 3])
+        self.assertFalse(evidence['sources'][1]['source']['text_extracted'])
+
     def test_scanned_pdf_is_rejected_with_an_ocr_message(self):
         from pypdf import PdfWriter
         with tempfile.TemporaryDirectory() as directory:
@@ -768,6 +794,60 @@ class DocumentServiceTests(unittest.TestCase):
         self.assertEqual(result['answer'], '需先取得主管核准。')
         self.assertEqual(result['sources'], evidence['sources'])
         self.assertIn('流程.md · 第 4 行', chat.call_args.args[0][1]['content'])
+
+    def test_full_presentation_summary_analyzes_every_slide_in_batches(self):
+        sources = [
+            {'excerpt': f'Slide {slide} content', 'source': {
+                'document_name': 'deck.pptx',
+                'locator': f'Slide {slide}',
+                'kind': 'powerpoint_slide',
+                'slide': slide}}
+            for slide in range(1, 23)
+        ]
+        evidence = {'sources': sources, 'coverage': {
+            'included_chunks': 22, 'total_chunks': 22, 'complete': True}}
+        replies = [
+            {'content': 'Batch 1'}, {'content': 'Batch 2'},
+            {'content': 'Batch 3'}, {'content': 'Batch 4'},
+            {'content': 'Complete summary'},
+        ]
+        with patch.object(documents, 'context', return_value=evidence) as context, \
+             patch.object(llm, 'chat', side_effect=replies) as chat:
+            result = JsApi().document_action(
+                '550e8400-e29b-41d4-a716-446655440000', 'full_summary')
+        context.assert_called_once_with(
+            '550e8400-e29b-41d4-a716-446655440000', limit=None)
+        self.assertEqual(chat.call_count, 5)
+        self.assertEqual(result['answer'], 'Complete summary')
+        self.assertEqual(result['coverage'], evidence['coverage'])
+        self.assertEqual(len(result['sources']), 22)
+        self.assertTrue(result['company_llm_used'])
+
+    def test_full_presentation_summary_reports_partial_coverage_on_batch_failure(self):
+        sources = [
+            {'excerpt': f'Slide {slide} content', 'source': {
+                'document_name': 'deck.pptx',
+                'locator': f'Slide {slide}',
+                'kind': 'powerpoint_slide',
+                'slide': slide}}
+            for slide in range(1, 23)
+        ]
+        evidence = {'sources': sources, 'coverage': {
+            'included_chunks': 22, 'total_chunks': 22, 'complete': True}}
+        with patch.object(documents, 'context', return_value=evidence), \
+             patch.object(llm, 'chat', side_effect=[
+                 {'content': 'Batch 1'},
+                 {'content': 'Batch 2'},
+                 {'error': 'timeout'},
+             ]) as chat:
+            result = JsApi().document_action(
+                '550e8400-e29b-41d4-a716-446655440000', 'full_summary')
+        self.assertEqual(chat.call_count, 3)
+        self.assertIn('3/4', result['error'])
+        self.assertEqual(result['coverage'], {
+            'included_chunks': 12, 'total_chunks': 22, 'complete': False})
+        self.assertEqual(len(result['sources']), 12)
+        self.assertNotIn('answer', result)
 
     def test_document_comparison_carries_both_documents_sources(self):
         first = {'sources': [{'excerpt': '付款 30 日。', 'source': {'document_name': 'A.md', 'locator': '第 1 行'}}]}

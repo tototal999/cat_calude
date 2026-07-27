@@ -32,6 +32,7 @@ function showTab(t) {
   if (nav) nav.classList.add('active');
   if (t === 'chat' && !_chatInited) initChat();
   if (t === 'documents') {
+    loadModelChoices();
     loadDocuments();
     if (_featurePolicy['documents.meeting_pack'] === true) {
       pywebview.api.latest_workflow_run().then(renderWorkflowRun);
@@ -104,7 +105,9 @@ function askDocument() {
 function runDocumentAction(action) {
   if (!_currentDocumentId) return;
   const answer = document.getElementById('document-answer');
-  answer.textContent = '正在依文件來源整理…';
+  answer.textContent = action === 'full_summary'
+    ? '正在分批分析全部投影片，請稍候…'
+    : '正在依文件來源整理…';
   pywebview.api.document_action(_currentDocumentId, action).then(renderDocumentResult);
 }
 
@@ -121,17 +124,34 @@ function useDocumentQuestion(question) {
   askDocument();
 }
 
+function appendDocumentCoverage(answer, coverage) {
+  if (!coverage || !coverage.total_chunks) return;
+  const note = document.createElement('p');
+  note.className = 'document-coverage-note';
+  const unit = coverage.unit || '個文件區塊';
+  note.textContent = coverage.complete
+    ? `完整分析涵蓋 ${coverage.included_chunks}/${coverage.total_chunks} ${unit}。`
+    : `此結果僅涵蓋 ${coverage.included_chunks}/${coverage.total_chunks} ${unit}，不能視為完整結論。`;
+  if (coverage.limited_chunks) {
+    note.textContent += ` 其中 ${coverage.limited_chunks} 張沒有可擷取文字；圖片與圖表未分析。`;
+  }
+  answer.appendChild(note);
+}
+
 function renderDocumentResult(result) {
   const answer = document.getElementById('document-answer');
-    if (result.error) { answer.textContent = result.error; return; }
-    answer.innerHTML = `<p>${escapeHtml(result.answer)}</p>`;
-    const coverage = result.coverage;
-    if (coverage && coverage.total_chunks && !coverage.complete) {
-      const note = document.createElement('p');
-      note.className = 'document-coverage-note';
-      note.textContent = `此結果抽樣涵蓋 ${coverage.included_chunks}/${coverage.total_chunks} 個文件區塊，非完整文件結論。`;
-      answer.appendChild(note);
+    if (result.error) {
+      answer.textContent = result.error;
+      appendDocumentCoverage(answer, result.coverage);
+      return;
     }
+    answer.innerHTML = `<p>${escapeHtml(result.answer)}</p>`;
+    const copyButton = document.createElement('button');
+    copyButton.className = 'secondary document-copy';
+    copyButton.textContent = '複製';
+    copyButton.onclick = () => copyText(result.answer, copyButton);
+    answer.appendChild(copyButton);
+    appendDocumentCoverage(answer, result.coverage);
     (result.sources || []).forEach(item => {
       const source = item.source;
       const card = document.createElement('div');

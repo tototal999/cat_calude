@@ -28,6 +28,7 @@ Success criteria (QA):
 from __future__ import annotations
 
 import ctypes
+from ctypes import wintypes
 from config import deployment, policy, settings
 LOG_DIR = settings.LOG_DIR
 LOG_FILE = settings.LOG_FILE
@@ -87,23 +88,47 @@ def _acquire_single_instance_lock() -> bool:
     return True
 
 
+def _find_pet_window() -> int:
+    """Return the layered Tk window used by the pet, not a same-title panel."""
+    user32 = ctypes.windll.user32
+    found = 0
+    GWL_EXSTYLE = -20
+    WS_EX_LAYERED = 0x00080000
+
+    @ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+    def visit(hwnd, _lparam):
+        nonlocal found
+        title = ctypes.create_unicode_buffer(32)
+        window_class = ctypes.create_unicode_buffer(32)
+        user32.GetWindowTextW(hwnd, title, len(title))
+        user32.GetClassNameW(hwnd, window_class, len(window_class))
+        if (title.value == 'ClaudeCat' and window_class.value == 'TkTopLevel'
+                and user32.GetWindowLongW(hwnd, GWL_EXSTYLE) & WS_EX_LAYERED):
+            found = hwnd
+            return False
+        return True
+
+    user32.EnumWindows(visit, 0)
+    return found
+
+
 def _wake_existing_instance() -> None:
     """Bring the already-running instance's cat to the front instead of just
     exiting, so a second launch reads as "there it is" rather than "nothing
     happened" (user-reported: the exe looked like it wouldn't run).
 
     Cross-process, so this can only drive the OS-level window - it cannot
-    call into the other process's Tk objects. ``self.root.title('ClaudeCat')``
-    is set once, on the main window only, so the title match is unambiguous.
+    call into the other process's Tk objects.
     """
     try:
-        hwnd = ctypes.windll.user32.FindWindowW(None, 'ClaudeCat')
+        user32 = ctypes.windll.user32
+        hwnd = _find_pet_window()
         if not hwnd:
             logger.info('could not find the running instance\'s window to wake')
             return
-        SW_SHOW = 5
-        ctypes.windll.user32.ShowWindow(hwnd, SW_SHOW)
-        ctypes.windll.user32.SetForegroundWindow(hwnd)
+        SW_RESTORE = 9
+        user32.ShowWindowAsync(hwnd, SW_RESTORE)
+        user32.SetForegroundWindow(hwnd)
     except Exception:
         logger.exception('could not wake existing instance')
 
@@ -545,7 +570,13 @@ class ClaudeCat:
     def _quit(self) -> None:
         self._save_config()  # position is only captured here, on clean exit
         self.tray.stop()
-        self.root.destroy()
+        local_llm.stop()
+        logger.info('quit requested; terminating all ClaudeCat UI loops')
+        logging.shutdown()
+        # Tk runs on a worker thread while pywebview owns the main thread.
+        # Destroying only the Tk root can leave the hidden pywebview loop alive
+        # and make the next EXE launch look like it did nothing.
+        os._exit(0)
 
     def _set_topmost(self) -> None:
         on = self.topmost.get()
