@@ -1,9 +1,9 @@
 # Session 摘要
-**儲存時間**：2026-07-24 15:10
+**儲存時間**：2026-07-24 15:35
 **工作目錄**：C:\Users\TF000054\claude\claude-cat
 
 ## 工作目標
-延續 ClaudeCat v7 開發：新增 wuma（猴子）skin、整理使用者 SOP 簡報命名與內容、修正 Codex 用量誤觸發貓咪睡眠動畫的問題，並依序重建 7.0.5、7.0.6 發布版。
+延續 ClaudeCat v7 開發：新增 wuma（猴子）skin、整理使用者 SOP 簡報命名與內容、修正 Codex 用量誤觸發貓咪睡眠動畫的問題，並依序重建 7.0.5、7.0.6 發布版。最終跳過 PR，直接合併進 main 並刪除功能分支。
 
 ## 已完成事項
 - **檔案改名**：`使用者SOP_投影版.pptx/.pdf/大綱.md` 全面改名為 `桌寵與LLM.*`；`skins/使用者SOP` 資料夾改名為 `skins/桌寵與LLM`（原始討論；`skins/wuma` 維持原名不改，因為要跟 bluecat/cowcat/ragdollcat 命名風格一致）。`tools/sop-deck-gen.js` 與 `tools/build-release.ps1` 內硬寫的舊檔名（含 char-code 編碼的 unicode 字串）同步更新。
@@ -20,10 +20,11 @@
 - **Agenda 頁不必跟大綱 1:1**：`.md` 大綱本身就聲明「不等於實際發布簡報」，Agenda 摘要可以把多張投影片合併成一行（例如「工具箱與 Skin：JSON、翻譯、切換 Skin、用量顯示」），但順序跟涵蓋範圍必須對得上實際投影片。
 
 ## 待辦事項
-- [ ] 上 Git：commit 這次的全部改動並 push（進行中，本則訊息之後動作）
+- [x] 上 Git：commit `1c423b8` 已推送到 `feat/multi-endpoint-llm-and-ui-fixes`
+- [x] 合併到 main：使用者決定跳過 PR，直接 `git merge --no-ff` 進 `main`（commit `4057184`），merge 無衝突，100 個測試全過，已 push
+- [x] 分支清理：`feat/multi-endpoint-llm-and-ui-fixes` 本地與遠端都已刪除，目前只剩 `main`
 - [ ] 使用者實機驗證 7.0.6：Agenda 頁序/內容、wuma skin 動畫、Codex 100% 時貓咪不再睡覺
 - [ ] `桌寵與LLM.pdf` 待手動用 PowerPoint 從新版 pptx 匯出
-- [ ] 開 PR：feat/multi-endpoint-llm-and-ui-fixes（上次 session 已產生連結但尚未開）
 - [ ] gemma 格式測試（是否需指定 `# 標題` 格式才能產簡報）——延續自上次 session，本次未處理
 
 ## 關鍵程式碼
