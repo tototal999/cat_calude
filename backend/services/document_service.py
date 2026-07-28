@@ -10,6 +10,7 @@ import json
 import logging
 import re
 import uuid
+from datetime import datetime
 from pathlib import Path
 
 from config import settings
@@ -17,6 +18,7 @@ from config import settings
 logger = logging.getLogger('claudecat')
 
 DOCUMENTS_DIR = settings.LOG_DIR / 'documents'
+MAX_ANALYSES_PER_DOCUMENT = 20
 _SUPPORTED_SUFFIXES = {'.txt', '.md', '.csv', '.pdf', '.docx', '.pptx', '.xlsx'}
 _TOKEN = re.compile(r"[A-Za-z0-9_]+|[\u4e00-\u9fff]+", re.UNICODE)
 _CJK_FUNCTION_CHARS = set('的是了在有和與及或為可可以請幾多少嗎呢吧啊')
@@ -212,20 +214,6 @@ def _extract_chunks(path: Path, suffix: str) -> list[dict]:
     return extractors[suffix](path)
 
 
-def _to_markdown(path: Path) -> str | None:
-    """Use MarkItDown as the local structural representation when available.
-
-    Citation locations still come from the native extractors above; Markdown is
-    retained for future local-model prompts, never sent to a remote endpoint.
-    """
-    try:
-        from markitdown import MarkItDown
-        return MarkItDown().convert(str(path)).text_content
-    except Exception:
-        logger.debug('MarkItDown conversion unavailable for %s', path, exc_info=True)
-        return None
-
-
 def ingest(path_value: str) -> dict:
     path = Path(path_value)
     if not path.is_file():
@@ -251,7 +239,6 @@ def ingest(path_value: str) -> dict:
         'id': document_id,
         'name': path.name,
         'suffix': suffix,
-        'markdown': _to_markdown(path),
         'chunks': chunks,
     }
     _index_path(document_id).write_text(json.dumps(document, ensure_ascii=False), encoding='utf-8')
@@ -282,10 +269,73 @@ def list_documents() -> list[dict]:
 
 def remove(document_id: str) -> dict:
     try:
-        _index_path(str(uuid.UUID(document_id))).unlink(missing_ok=True)
+        key = str(uuid.UUID(document_id))
     except ValueError:
         return {'error': '無效的文件識別碼。'}
+    _index_path(key).unlink(missing_ok=True)
+    # Removing the index must take the saved analyses with it, or they linger
+    # as orphans no UI can reach.
+    _analyses_path(key).unlink(missing_ok=True)
     return {'status': 'ok'}
+
+
+def _analyses_path(document_id: str) -> Path:
+    """Derived from DOCUMENTS_DIR on each call, not cached at import: tests
+    repoint DOCUMENTS_DIR, and a cached value would write to the real profile.
+
+    A subdirectory rather than "<id>.analyses.json" because list_documents()
+    globs *.json here and would otherwise parse every analysis file.
+    """
+    return DOCUMENTS_DIR / 'analyses' / f'{document_id}.json'
+
+
+def load_analyses(document_id: str) -> list[dict]:
+    """Saved analyses for one document, oldest first; [] when there are none."""
+    try:
+        key = str(uuid.UUID(document_id))
+    except ValueError:
+        return []
+    try:
+        data = json.loads(_analyses_path(key).read_text(encoding='utf-8'))
+    except (OSError, ValueError):
+        return []
+    return data if isinstance(data, list) else []
+
+
+def latest_analysis(document_id: str) -> dict | None:
+    entries = load_analyses(document_id)
+    return entries[-1] if entries else None
+
+
+def save_analysis(document_id: str, kind: str, label: str, result: dict) -> None:
+    """Persist one analysis result so it survives closing the app.
+
+    Stored beside the index rather than inside it: re-ingesting a document
+    rewrites the index, and past analyses should outlive that.
+    """
+    try:
+        key = str(uuid.UUID(document_id))
+    except ValueError:
+        return
+    entries = load_analyses(key)
+    entries.append({
+        'kind': kind,
+        'label': label,
+        'saved_at': datetime.now().isoformat(timespec='seconds'),
+        'answer': result.get('answer', ''),
+        'sources': result.get('sources', []),
+        'coverage': result.get('coverage', {}),
+    })
+    del entries[:-MAX_ANALYSES_PER_DOCUMENT]  # bounded: no unbounded growth on disk
+    path = _analyses_path(key)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_suffix('.tmp')
+    try:
+        temporary.write_text(json.dumps(entries, ensure_ascii=False), encoding='utf-8')
+        temporary.replace(path)
+    except OSError:
+        logger.exception('could not save document analysis')
+        temporary.unlink(missing_ok=True)
 
 
 def query(document_id: str, question: str, limit: int = 3) -> dict:

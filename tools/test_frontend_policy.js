@@ -9,6 +9,7 @@ const calls = {
   documentAction: null
 };
 const elements = new Map();
+const documentListeners = new Map();
 let copiedText = null;
 
 function element(tagName = 'div') {
@@ -30,7 +31,7 @@ const document = {
     return elements.get(id);
   },
   querySelectorAll() { return []; },
-  addEventListener() {},
+  addEventListener(name, handler) { documentListeners.set(name, handler); },
   createElement(tagName) { return element(tagName); }
 };
 
@@ -89,6 +90,21 @@ async function run() {
   assert.match(
     indexHtml,
     /onclick="runDocumentAction\('full_summary'\)">完整分析（全部投影片）<\/button>/);
+
+  // Drag-and-drop must stay cancelled: an unhandled drop navigates the window
+  // to file:/// and request_open() never reloads the page, so the UI would be
+  // stuck until a restart. The label must not invite the gesture either.
+  assert.doesNotMatch(indexHtml, /拖文件給我/, 'the picker button must not promise drag and drop');
+  for (const name of ['dragover', 'drop']) {
+    const handler = documentListeners.get(name);
+    assert.ok(handler, `chat.js must cancel ${name}`);
+    let prevented = false;
+    handler({ preventDefault() { prevented = true; } });
+    assert.ok(prevented, `${name} must call preventDefault`);
+  }
+  assert.strictEqual(
+    elements.get('document-status').textContent,
+    '這個視窗不支援拖放，請按「選擇文件」。');
 
   context.applyFeaturePolicy({ documents: true, 'documents.meeting_pack': false });
   context.showTab('documents');

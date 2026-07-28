@@ -17,6 +17,21 @@ const PROMPTS = [
 ];
 let promptSelectedIndex = 0;
 
+// Drag-and-drop is deliberately off. Without these, a dropped file falls
+// through to WebView2's default and navigates the window to file:///…, and
+// request_open() only calls show() - it never reloads the page - so the whole
+// UI would stay broken until ClaudeCat is restarted. Both events must be
+// cancelled: preventing only "drop" still lets the browser handle the drag.
+// Registered at module scope so it covers every tab from the first load.
+['dragover', 'drop'].forEach(name => {
+  document.addEventListener(name, event => {
+    event.preventDefault();
+    if (name !== 'drop') return;
+    const status = document.getElementById('document-status');
+    if (status) status.textContent = '這個視窗不支援拖放，請按「選擇文件」。';
+  });
+});
+
 function escapeHtml(value) {
   const el = document.createElement('div');
   el.textContent = String(value);
@@ -78,6 +93,7 @@ function loadDocuments() {
         document.getElementById('document-question-box').style.display = '';
         document.getElementById('document-actions').style.display = '';
         document.getElementById('document-status').textContent = `文件：${doc.name}，已完成分析`;
+        restoreLatestAnalysis(doc.id);
         loadDocuments();
       };
       row.querySelector('.document-remove').onclick = () => pywebview.api.remove_document(doc.id).then(() => {
@@ -136,6 +152,20 @@ function appendDocumentCoverage(answer, coverage) {
     note.textContent += ` 其中 ${coverage.limited_chunks} 張沒有可擷取文字；圖片與圖表未分析。`;
   }
   answer.appendChild(note);
+}
+
+function restoreLatestAnalysis(documentId) {
+  const answer = document.getElementById('document-answer');
+  answer.textContent = '';
+  pywebview.api.latest_document_analysis(documentId).then(entry => {
+    // Ignore a result that arrived after the user moved on to another document.
+    if (!entry || !entry.answer || _currentDocumentId !== documentId) return;
+    renderDocumentResult(entry);
+    const note = document.createElement('p');
+    note.className = 'document-coverage-note';
+    note.textContent = `以上是上次的「${entry.label || entry.kind}」結果（${entry.saved_at || '時間不明'}）。重新按分析鍵可取得最新結果。`;
+    answer.insertBefore(note, answer.firstChild);
+  });
 }
 
 function renderDocumentResult(result) {
