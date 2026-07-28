@@ -66,7 +66,7 @@ import winalpha
 # Single source of truth for the release version. tools/build-release.ps1 reads
 # this and refuses to build when its -Version argument disagrees, so a packaged
 # EXE can never claim a version the code doesn't.
-__version__ = '7.1.0'
+__version__ = '7.1.1'
 
 # Unique enough to not collide with an unrelated app's mutex on the same machine.
 _SINGLE_INSTANCE_MUTEX_NAME = 'ClaudeCat_SingleInstance_5f3a9c1e'
@@ -927,6 +927,12 @@ class ClaudeCat:
 
     def _schedule_tick(self) -> None:
         """30s tick on the tk after() loop (spec: no new thread)."""
+        if not policy.is_enabled('schedule'):
+            # Policy hides the schedule menu entry *and* gates list/upsert/delete
+            # on the bridge, so a schedule.json left over from before the feature
+            # was turned off would keep firing cards with no way to remove them.
+            # Policy is baked at build time, so stop ticking rather than reschedule.
+            return
         try:
             for item, kind in self.scheduler.tick(datetime.now()):
                 self._queue_card(scheduler_mod.card_text(item, kind))
