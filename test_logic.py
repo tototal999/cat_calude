@@ -126,6 +126,37 @@ class PetStateTests(unittest.TestCase):
         pet._effective_usage = lambda: None
         self.assertTrue(pet._should_sleep())
 
+    def test_disabled_schedule_policy_stops_the_tick_from_firing(self):
+        """Hiding the schedule UI must also stop a leftover schedule.json from
+        firing: the bridge blocks list/upsert/delete, so a card the user can
+        still see but can no longer delete is a trap."""
+        with patch('logging.handlers.RotatingFileHandler', return_value=logging.NullHandler()):
+            cat_module = importlib.import_module('cat')
+
+        class Scheduler:
+            def __init__(self):
+                self.ticked = False
+
+            def tick(self, _now):
+                self.ticked = True
+                return [({'title': '彈卡外觀測試'}, 'ontime')]
+
+        pet = object.__new__(cat_module.ClaudeCat)
+        pet.scheduler = Scheduler()
+        pet.root = type('Root', (), {'after': lambda _self, *_a: None})()
+        pet._pending_cards = []
+        pet._cards_lock = threading.Lock()
+
+        with patch.object(cat_module.policy, 'is_enabled', return_value=False):
+            pet._schedule_tick()
+        self.assertFalse(pet.scheduler.ticked)
+        self.assertEqual(pet._pending_cards, [])
+
+        with patch.object(cat_module.policy, 'is_enabled', return_value=True):
+            pet._schedule_tick()
+        self.assertTrue(pet.scheduler.ticked)
+        self.assertEqual(len(pet._pending_cards), 1)
+
     def test_restoring_full_size_clamps_a_docked_pet_on_screen(self):
         with patch('logging.handlers.RotatingFileHandler', return_value=logging.NullHandler()):
             cat_module = importlib.import_module('cat')
