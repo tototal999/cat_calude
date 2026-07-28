@@ -63,6 +63,11 @@ import scheduler as scheduler_mod
 import spritecat
 import winalpha
 
+# Single source of truth for the release version. tools/build-release.ps1 reads
+# this and refuses to build when its -Version argument disagrees, so a packaged
+# EXE can never claim a version the code doesn't.
+__version__ = '7.1.0'
+
 # Unique enough to not collide with an unrelated app's mutex on the same machine.
 _SINGLE_INSTANCE_MUTEX_NAME = 'ClaudeCat_SingleInstance_5f3a9c1e'
 _ERROR_ALREADY_EXISTS = 183
@@ -336,9 +341,9 @@ class ClaudeCat:
         self._start_codex_poll_thread()
         self._animate()
         self.root.after(2000, self._schedule_tick)
-        logger.info('started: skin=%s size=%d poll_interval=%d monitor=%s',
-                    self.current_skin.get(), self.w, self.poll_interval.get(),
-                    self.monitor_enabled.get())
+        logger.info('started: version=%s skin=%s size=%d poll_interval=%d monitor=%s',
+                    __version__, self.current_skin.get(), self.w,
+                    self.poll_interval.get(), self.monitor_enabled.get())
 
     # ---- UI wiring --------------------------------------------------------
 
@@ -492,8 +497,18 @@ class ClaudeCat:
 
         outer = tk.Frame(panel, bg='#202225', highlightbackground='#4f8cff', highlightthickness=1)
         outer.pack(fill='both', expand=True)
-        tk.Label(outer, text='回答', bg='#202225', fg='#f1f3f4',
-                 font=('Segoe UI', 10, 'bold')).pack(anchor='w', padx=10, pady=(8, 3))
+
+        def close() -> None:
+            panel.destroy()
+            self._set_pet_state(PetState.IDLE)
+
+        header = tk.Frame(outer, bg='#202225')
+        header.pack(fill='x', padx=10, pady=(8, 3))
+        tk.Label(header, text='回答', bg='#202225', fg='#f1f3f4',
+                 font=('Segoe UI', 10, 'bold')).pack(side='left')
+        tk.Button(header, text='×', command=close, relief='flat', bd=0,
+                  bg='#202225', fg='#9aa0a6', activebackground='#303236',
+                  activeforeground='#ffffff').pack(side='right')
         body = tk.Text(outer, wrap='word', bg='#303236', fg='#f1f3f4',
                        insertbackground='#ffffff', relief='flat', font=('Segoe UI', 10),
                        padx=8, pady=7)
@@ -502,10 +517,6 @@ class ClaudeCat:
         body.pack(fill='both', expand=True, padx=9, pady=(0, 7))
         buttons = tk.Frame(outer, bg='#202225')
         buttons.pack(fill='x', padx=8, pady=(0, 8))
-
-        def close() -> None:
-            panel.destroy()
-            self._set_pet_state(PetState.IDLE)
 
         def copy() -> None:
             self.root.clipboard_clear()
@@ -518,6 +529,7 @@ class ClaudeCat:
         tk.Button(buttons, text='收合', command=close, relief='flat', bd=0,
                   bg='#303236', fg='#f1f3f4').pack(side='right')
         panel.bind('<Escape>', lambda _event: close())
+        panel.focus_force()
 
     def _place_badge(self) -> None:
         self.badge_win.update_idletasks()
@@ -630,6 +642,9 @@ class ClaudeCat:
 
     def _menu(self, e: tk.Event) -> None:
         m = tk.Menu(self.root, tearoff=0)
+        # Version first: when a rebuilt EXE "looks unchanged", this is how you
+        # tell a bad fix from an old binary still being woken by the mutex.
+        m.add_command(label=f'ClaudeCat {__version__}', state='disabled')
         m.add_command(label=self._status_text(), state='disabled')
         m.add_separator()
         # Company policy hides entries outright rather than greying them out,

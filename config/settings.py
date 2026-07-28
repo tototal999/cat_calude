@@ -48,14 +48,6 @@ def load_config() -> dict:
         config.update(_read_config_unlocked())
         return dict(config)
 
-def save_config():
-    with _config_lock:
-        try:
-            with open(CONFIG_FILE, 'w', encoding='utf-8') as f:
-                json.dump(config, f, indent=2, ensure_ascii=False)
-        except OSError:
-            logger.exception('could not save config')
-
 
 def merge_config(patch: dict) -> dict:
     """Atomically merge one owner's keys into config.json within this process."""

@@ -1,6 +1,9 @@
 param(
+    # Omit to build whatever cat.py's __version__ says; pass it to assert the
+    # version you think you are building (mismatch aborts instead of shipping
+    # an EXE whose reported version disagrees with its code).
     [ValidatePattern('^\d+\.\d+\.\d+(?:\.\d+)?$')]
-    [string]$Version = '7.0.0'
+    [string]$Version
 )
 
 $ErrorActionPreference = 'Stop'
@@ -34,7 +37,20 @@ try {
     Start-Transcript -LiteralPath $logFile -Force | Out-Null
     $transcriptStarted = $true
     Write-Host "Release build started: $timestamp"
-    Write-Host "Version: $Version"
+
+    # cat.py owns the version; -Version is only an assertion against it.
+    $catSource = Get-Content -LiteralPath (Join-Path $projectRoot 'cat.py') -Encoding utf8 -Raw
+    $versionMatch = [regex]::Match($catSource, "(?m)^__version__\s*=\s*'([^']+)'")
+    if (-not $versionMatch.Success) {
+        throw "Could not read __version__ from cat.py."
+    }
+    $codeVersion = $versionMatch.Groups[1].Value
+    if ($Version -and $Version -ne $codeVersion) {
+        throw "Version mismatch: -Version is '$Version' but cat.py __version__ is '$codeVersion'. Update cat.py (or drop -Version)."
+    }
+    $Version = $codeVersion
+
+    Write-Host "Version: $Version (from cat.py __version__)"
     Write-Host "Python: $python"
 
     if (Test-Path -LiteralPath $manifestFile) {
@@ -109,12 +125,44 @@ try {
     $originalLocalAppData = $env:LOCALAPPDATA
     try {
         $env:LOCALAPPDATA = $checkDirectory
+        $guiLog = Join-Path $checkDirectory 'ClaudeCat\claudecat.log'
         $guiProcess = Start-Process -FilePath $executable -WorkingDirectory $payloadDirectory -PassThru
-        Start-Sleep -Seconds 8
-        $guiProcess.Refresh()
-        if ($guiProcess.HasExited) {
-            throw "Packaged GUI exited early with code $($guiProcess.ExitCode)."
+        # "Process still alive" is not evidence the pet started: the main thread
+        # parks in serve_main_thread() waiting for an open request, so a Tk side
+        # that silently degraded would still pass a liveness-only check. Require
+        # the Tk thread's own startup line (and the version it reports), and
+        # fail on any crash it logs.
+        $expectedStart = "started: version=$Version"
+        $startedLogged = $false
+        $deadline = (Get-Date).AddSeconds(30)
+        while ((Get-Date) -lt $deadline) {
+            $guiProcess.Refresh()
+            if ($guiProcess.HasExited) {
+                throw "Packaged GUI exited early with code $($guiProcess.ExitCode). See $guiLog"
+            }
+            $logText = ''
+            if (Test-Path -LiteralPath $guiLog -PathType Leaf) {
+                try {
+                    $logText = Get-Content -LiteralPath $guiLog -Encoding utf8 -Raw -ErrorAction Stop
+                } catch {
+                    $logText = ''   # mid-write; retry on the next tick
+                }
+            }
+            if ($logText) {
+                if ($logText -match 'crashed') {
+                    throw "Packaged GUI logged a crash. See $guiLog"
+                }
+                if ($logText.Contains($expectedStart)) {
+                    $startedLogged = $true
+                    break
+                }
+            }
+            Start-Sleep -Milliseconds 500
         }
+        if (-not $startedLogged) {
+            throw "Packaged GUI never logged '$expectedStart' within 30s. See $guiLog"
+        }
+        Write-Host "QA_RESULT|STATUS:PASS|EXPECTED:$expectedStart|ACTUAL:logged by packaged Tk thread"
         $verification += 'gui-smoke'
     } finally {
         $env:LOCALAPPDATA = $originalLocalAppData
