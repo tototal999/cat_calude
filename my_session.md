@@ -1,11 +1,12 @@
 # Session 摘要
-**儲存時間**：2026-07-28 10:05
+**儲存時間**：2026-07-28 10:55
 **工作目錄**：C:\Users\TF000054\claude\claude-cat
 
 ## 工作目標
 承接 7.0.6 的實機回報。起點是「長回答面板沒有關閉方式」，兩次修正都被回報「實測沒改變」，
-因而做了一次全專案盲點盤查，並依盤查結果補強版本可見性與發布驗證。後續由使用者提問衍生出
-三件事：文件分析結果落地、關閉拖放、移除 MarkItDown。版本從 7.0.6 一路發到 7.2.2。
+因而做了一次全專案盲點盤查，並依盤查結果補強版本可見性與發布驗證。後續由使用者實機回報
+持續衍生：文件分析結果落地、關閉拖放、移除 MarkItDown、文件去重與時間戳 ID、PDF 完整分析、
+移除流程 SOP，最後同步簡報與大綱。版本從 7.0.6 一路發到 7.3.1。
 
 ## 已完成事項
 
@@ -42,6 +43,7 @@
 
 **7.2.0 — 文件分析結果落地**
 - 六種操作（快速摘要、完整分析、流程 SOP、整理表格、文件問答、比較文件）全部經過
+  （SOP 已於 7.3.1 移除，現為五種）
   `backend/routes/api.py` 的 `_remember()` 單一出口存檔。
 - 存 `%LOCALAPPDATA%\ClaudeCat\documents\analyses\<uuid>.json`，每份文件上限 20 筆，
   tmp + `replace()` 原子寫入；按 × 刪除文件時一併刪 analyses 檔。
@@ -64,6 +66,41 @@
   約 113 MB，與「不帶入 pandas／numpy」的既有決定衝突；且輸出是無頁碼／投影片編號的扁平
   Markdown，撐不起 P6-4 的來源定位。
 - 既有索引檔留著 `markdown` key 不影響讀取，現有文件不用重新解析。
+
+**7.2.3 — 文件去重與時間戳 ID**
+- 使用者回報「關閉後看不到分析結果」。實際上功能正常，但有**兩份同名索引**（09:17 與 10:12 各建一次
+  同一個 PPTX），清單標籤一模一樣，點到沒有分析的那份。
+- 根因：`ingest()` 無條件 `uuid.uuid4()`，完全沒有去重。改為先算 SHA-256，內容相同就沿用既有索引
+  （檔名變了就更新顯示名稱），內容改了才建新索引——這同時就是「強制重建」的自然路徑。
+- 文件 ID 從 uuid4 改為 `YYYYMMDDHHMMSS`（同秒衝突加 `_N`）。使用者原本說 `YYYYMMDDMISS`，
+  少了小時會讓 09:17:30 與 10:17:30 撞號，已補上 HH。`safe_document_id()` 同時接受舊 uuid4，
+  既有索引不用重建。
+- 清單顯示建立時間；7.2.3 前的索引沒有 `indexed_at`，改用索引檔 mtime 補上。
+- **修掉我自己的 regression**：`test_logic.py` 加 `setUpModule()`。那些 api 層測試只 mock LLM
+  沒 mock 儲存路徑，7.2.0 的 `_remember()` 讓它們開始寫進真實 `%LOCALAPPDATA%`（目錄裡的
+  `550e8400-…json` 就是測試垃圾，已刪）。
+- **建置 step 6 抓到的**：`workflow_service.py:213` 也用 `uuid.UUID()` 驗證 document_id，
+  時間戳 ID 會被擋。改呼叫 `documents.safe_document_id()`，該函式因跨模組使用而改為公開命名。
+
+**7.3.0 — PDF 完整分析**
+- `_full_presentation_summary` 原本硬性要求所有 chunk 是 `powerpoint_slide`，PDF 的 `pdf_page`
+  直接被拒。改用 kind → 單位對照表（投影片／頁），提示詞跟著說「逐張」或「逐頁」。
+- DOCX／XLSX 仍擋著：段落與列的 chunk 太細，一份文件會炸成上百次 LLM 呼叫。
+- 新增 `FULL_ANALYSIS_MAX_BATCHES = 40`（240 頁）。超過不分析，透過既有 coverage 機制誠實
+  回報部分涵蓋，而不是無聲跑十幾分鐘。順帶修掉成功路徑直接回傳 `evidence['coverage']`、
+  沒反映實際處理量的問題。
+- 按鈕改名「完整分析（不抽樣）」，與旁邊的「快速摘要（抽樣）」形成對照。
+
+**7.3.1 — 移除流程 / SOP**
+- 使用者決定移除。`sop` action、標籤與按鈕全部拿掉，全 codebase 零殘留。
+- 既有已存的 `kind='sop'` 分析結果仍可正常還原（label 是存下來的），不需要資料遷移。
+- 同時把「若來源不足請明確說明」這類防呆補進 `summary` 的指令——移除 SOP 後它是唯一還缺的。
+
+**簡報與大綱同步**
+- `tools/sop-deck-gen.js`：移除「流程 SOP」字樣，補上完整分析（不抽樣）、12 個區塊抽樣說明、
+  分析結果自動保存、重複選檔沿用既有索引。已重新產生 `桌寵與LLM.pptx`（15 張），
+  並用 python-pptx 逐項驗證 7 個檢查點全過。
+- `桌寵與LLM大綱.md` 第 8 節與功能表同步。
 
 ## 重要決定
 - **版本號單一來源是 `cat.py` 的 `__version__`**，`-Version` 只是斷言。發布只改那一處。
@@ -123,7 +160,7 @@ if ($logText.Contains($expectedStart)) { $startedLogged = $true; break }
 
 ## 其他備註
 - 建置指令現在不必帶版本：`powershell -NoProfile -ExecutionPolicy Bypass -File tools\build-release.ps1`
-- 測試：`%LOCALAPPDATA%\Programs\Python\Python311\python.exe -m unittest test_logic`（106 條）
+- 測試：`%LOCALAPPDATA%\Programs\Python\Python311\python.exe -m unittest test_logic`（110 條）
 - 實機測試前務必先關掉舊的 ClaudeCat process，否則單一實例 mutex 只會喚醒舊視窗；
   確認版本看右鍵選單第一列或 log 的 `started: version=`
 - 本機沒裝 GitHub CLI (`gh`)、LibreOffice/soffice

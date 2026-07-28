@@ -30,6 +30,27 @@ import spritecat
 import worker
 
 
+_documents_sandbox = None
+
+
+def setUpModule():
+    """Keep the whole suite out of the real %LOCALAPPDATA%\\ClaudeCat.
+
+    JsApi().document_action() and friends persist their result, and the tests
+    that exercise them mock the LLM but not the storage path - so without this
+    a plain test run appends junk to the user's own saved analyses. Tests that
+    need their own directory still patch DOCUMENTS_DIR themselves; that patch
+    simply wins over this one.
+    """
+    global _documents_sandbox
+    _documents_sandbox = tempfile.TemporaryDirectory()
+    patcher = patch.object(documents, 'DOCUMENTS_DIR',
+                           Path(_documents_sandbox.name) / 'documents')
+    patcher.start()
+    unittest.addModuleCleanup(patcher.stop)
+    unittest.addModuleCleanup(_documents_sandbox.cleanup)
+
+
 class SchedulerTests(unittest.TestCase):
     def test_invalid_json_is_reported(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -689,7 +710,7 @@ class DocumentServiceTests(unittest.TestCase):
                 self.assertEqual([d['id'] for d in documents.list_documents()], [document_id])
 
                 for index in range(documents.MAX_ANALYSES_PER_DOCUMENT + 5):
-                    documents.save_analysis(document_id, 'sop', '流程 / SOP',
+                    documents.save_analysis(document_id, 'table', '整理表格',
                                             {'answer': f'第 {index} 次'})
                 saved = documents.load_analyses(document_id)
                 self.assertEqual(len(saved), documents.MAX_ANALYSES_PER_DOCUMENT)
@@ -697,6 +718,51 @@ class DocumentServiceTests(unittest.TestCase):
 
                 documents.remove(document_id)
                 self.assertEqual(documents.load_analyses(document_id), [])
+
+    def test_reingesting_the_same_file_reuses_the_index_and_its_analyses(self):
+        """Picking the same file twice used to mint a second id, leaving two
+        rows with an identical label and the analyses on only one of them."""
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / '採購.md'
+            source.write_text('# 付款條款\n付款期限為收貨後 30 日。\n', encoding='utf-8')
+            with patch.object(documents, 'DOCUMENTS_DIR', root / 'documents'):
+                first = documents.ingest(str(source))
+                document_id = first['document']['id']
+                self.assertFalse(first['reused'])
+                self.assertRegex(document_id, r'^\d{14}(?:_\d+)?$')
+                documents.save_analysis(document_id, 'summary', '快速摘要（抽樣）',
+                                        {'answer': '重點一'})
+
+                again = documents.ingest(str(source))
+                self.assertTrue(again['reused'])
+                self.assertEqual(again['document']['id'], document_id)
+                self.assertEqual(len(documents.list_documents()), 1)
+                self.assertEqual(documents.latest_analysis(document_id)['answer'], '重點一')
+
+                # Renaming on disk keeps one index but shows the current name.
+                renamed = root / '採購v2.md'
+                source.rename(renamed)
+                third = documents.ingest(str(renamed))
+                self.assertTrue(third['reused'])
+                self.assertEqual(third['document']['name'], '採購v2.md')
+                self.assertEqual(len(documents.list_documents()), 1)
+
+                # Changed content is a different document, not a reuse.
+                renamed.write_text('# 付款條款\n付款期限為收貨後 45 日。\n', encoding='utf-8')
+                fourth = documents.ingest(str(renamed))
+                self.assertFalse(fourth['reused'])
+                self.assertNotEqual(fourth['document']['id'], document_id)
+                self.assertEqual(len(documents.list_documents()), 2)
+
+    def test_document_id_validation_rejects_path_traversal(self):
+        self.assertIsNone(documents.safe_document_id('../../evil'))
+        self.assertIsNone(documents.safe_document_id('20260728'))          # too short
+        self.assertEqual(documents.safe_document_id('20260728101530'), '20260728101530')
+        self.assertEqual(documents.safe_document_id('20260728101530_1'), '20260728101530_1')
+        # Indexes created before 7.2.3 still carry uuid4 keys.
+        self.assertEqual(documents.safe_document_id('550e8400-e29b-41d4-a716-446655440000'),
+                         '550e8400-e29b-41d4-a716-446655440000')
 
     def test_failed_analysis_is_not_saved_as_a_stale_answer(self):
         from backend.routes import api as api_module
@@ -863,6 +929,54 @@ class DocumentServiceTests(unittest.TestCase):
         self.assertEqual(result['answer'], '需先取得主管核准。')
         self.assertEqual(result['sources'], evidence['sources'])
         self.assertIn('流程.md · 第 4 行', chat.call_args.args[0][1]['content'])
+
+    def test_full_analysis_covers_pdf_pages_and_caps_very_long_documents(self):
+        from backend.routes import api as api_module
+        cap = api_module.FULL_ANALYSIS_BATCH_SIZE * api_module.FULL_ANALYSIS_MAX_BATCHES
+
+        def pdf_sources(count):
+            return [{'excerpt': f'Page {page} content', 'source': {
+                'document_name': '流程.pdf', 'locator': f'第 {page} 頁',
+                'kind': 'pdf_page', 'page': page}} for page in range(1, count + 1)]
+
+        # A PDF must be accepted, not rejected as "PPTX only".
+        sources = pdf_sources(13)
+        with patch.object(documents, 'context', return_value={
+                'sources': sources,
+                'coverage': {'included_chunks': 13, 'total_chunks': 13,
+                             'complete': True, 'unit': '頁'}}), \
+             patch.object(llm, 'chat', return_value={'content': 'batch'}) as chat:
+            result = JsApi().document_action('20260728101530', 'full_summary')
+        self.assertNotIn('error', result)
+        self.assertTrue(result['coverage']['complete'])
+        # ceil(13/6) = 3 batches, plus one final aggregation.
+        self.assertEqual(chat.call_count, 4)
+        self.assertIn('逐頁', chat.call_args_list[0].args[0][0]['content'])
+
+        # Beyond the cap the answer must admit it is partial, not claim完整.
+        long_sources = pdf_sources(cap + 30)
+        with patch.object(documents, 'context', return_value={
+                'sources': long_sources,
+                'coverage': {'included_chunks': len(long_sources),
+                             'total_chunks': len(long_sources),
+                             'complete': True, 'unit': '頁'}}), \
+             patch.object(llm, 'chat', return_value={'content': 'batch'}):
+            capped = JsApi().document_action('20260728101530', 'full_summary')
+        self.assertFalse(capped['coverage']['complete'])
+        self.assertEqual(capped['coverage']['included_chunks'], cap)
+        self.assertEqual(capped['coverage']['total_chunks'], len(long_sources))
+        self.assertEqual(len(capped['sources']), cap)
+
+    def test_full_analysis_still_rejects_formats_without_page_level_chunks(self):
+        sources = [{'excerpt': '第 4 段', 'source': {
+            'document_name': '規範.docx', 'locator': '第 4 段',
+            'kind': 'word_paragraph'}}]
+        with patch.object(documents, 'context', return_value={'sources': sources,
+                                                              'coverage': {}}), \
+             patch.object(llm, 'chat') as chat:
+            result = JsApi().document_action('20260728101530', 'full_summary')
+        self.assertEqual(result['error'], '完整分析目前僅支援 PPTX 與 PDF。')
+        chat.assert_not_called()
 
     def test_full_presentation_summary_analyzes_every_slide_in_batches(self):
         sources = [

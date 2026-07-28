@@ -152,7 +152,8 @@ s.addText("多數同事無法直接上外網使用 LLM。ClaudeCat 把公司已�
                  on("chat.export_pptx") ? "簡報大綱匯出 PPTX" : null].filter(Boolean);
   if (extra.length) chatLines.push(extra.join("、"));
   const docLines = ["右鍵 →「文件助手…」", "PDF／Word／PowerPoint／Excel"];
-  docLines.push("摘要、流程 SOP、表格整理" + (on("documents.compare") ? "、比較文件" : ""));
+  docLines.push("快速摘要（抽樣）、整理表格" + (on("documents.compare") ? "、比較文件" : ""));
+  docLines.push("完整分析（不抽樣）：PPTX／PDF 逐頁讀完");
   cardGrid(s, [
     on("quick_question") && { title: "快速提問", lines: ["點一下貓咪，輸入問題按 Enter", "整理工作重點、解釋錯誤訊息", "短答留在氣泡，長答自動展開卡片"] },
     { title: "LLM 交談介面", lines: chatLines },
@@ -246,12 +247,13 @@ frame(s, "分析文件與文件問答");
 y = lead(s, "把文件交給貓咪，再依來源提問");
 steps(s, [
   "右鍵點貓咪，選「文件助手…」。",
-  "選擇 PDF／Word／PowerPoint／Excel，等待本機索引完成。",
-  "可執行摘要、流程 SOP、表格整理" + (on("documents.compare") ? "或比較文件。" : "。"),
-  "提問並查看答案下方的來源引用。",
-], { y: y + 0.15, gap: 0.85, size: 16 });
-note(s, "建議問題：誰需要批准？這份文件在說什麼？有哪些注意事項？", 5.85);
-note(s, "提醒：文件未提及時，系統會明確表示無法依文件確認。", 6.55, T.alertRed);
+  "按「選擇文件」挑 PDF／Word／PowerPoint／Excel，等待本機索引完成。",
+  "快速摘要（抽樣）最多取 12 個區塊；完整分析（不抽樣）逐頁讀完全文。",
+  "提問並查看答案下方的來源引用與涵蓋範圍。",
+], { y: y + 0.15, gap: 0.8, size: 16 });
+note(s, "分析結果會自動保存；關閉程式後重新選取同一份文件，會帶回上次結果。", 5.75);
+note(s, "重複選取同一個檔案會沿用既有索引，不會重複解析。", 6.2);
+note(s, "提醒：文件未提及時，系統會明確表示無法依文件確認。", 6.65, T.alertRed);
 }
 
 /* ========= 10. 文件會議包 ========= */
