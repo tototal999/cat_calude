@@ -66,7 +66,7 @@ import winalpha
 # Single source of truth for the release version. tools/build-release.ps1 reads
 # this and refuses to build when its -Version argument disagrees, so a packaged
 # EXE can never claim a version the code doesn't.
-__version__ = '7.1.1'
+__version__ = '7.2.2'
 
 # Unique enough to not collide with an unrelated app's mutex on the same machine.
 _SINGLE_INSTANCE_MUTEX_NAME = 'ClaudeCat_SingleInstance_5f3a9c1e'

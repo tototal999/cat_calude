@@ -21,6 +21,18 @@ logger = logging.getLogger('claudecat')
 FULL_PRESENTATION_BATCH_SIZE = 6
 
 
+def _remember(document_id, kind, label, result):
+    """Persist a finished analysis, then hand it back unchanged.
+
+    Every document result flows through here so 'survives a restart' is one
+    rule rather than six call sites that can drift apart. Failures are not
+    saved: a stored error would come back as a stale answer on reopen.
+    """
+    if not result.get('error'):
+        documents.save_analysis(document_id, kind, label, result)
+    return result
+
+
 def _full_presentation_summary(document_id):
     evidence = documents.context(document_id, limit=None)
     if evidence.get('error'):
@@ -247,11 +259,12 @@ class JsApi:
             return evidence
         evidence['answer'] = result['content']
         evidence['company_llm_used'] = True
-        return evidence
+        return _remember(document_id, 'question', f'問答：{question}', evidence)
 
     def document_action(self, document_id, action):
         if action == 'full_summary':
-            return _full_presentation_summary(document_id)
+            return _remember(document_id, 'full_summary', '完整分析（全部投影片）',
+                             _full_presentation_summary(document_id))
         actions = {
             'summary': '以條列方式摘要這份文件的重點、適用對象與注意事項。',
             'sop': '整理這份文件中明確描述的流程或 SOP，按順序列出；未描述的步驟不可補充。',
@@ -279,7 +292,16 @@ class JsApi:
         ], model=llm.model_for_task('document', wm._current_model), timeout=180)
         if result.get('error'):
             return {'answer': f'文件 LLM 無法回答：{result["error"]}', 'sources': evidence['sources'], 'coverage': coverage}
-        return {'answer': result['content'], 'sources': evidence['sources'], 'coverage': coverage, 'company_llm_used': True}
+        labels = {'summary': '快速摘要（抽樣）', 'sop': '流程 / SOP', 'table': '整理表格'}
+        return _remember(document_id, action, labels[action], {
+            'answer': result['content'], 'sources': evidence['sources'],
+            'coverage': coverage, 'company_llm_used': True})
+
+    def latest_document_analysis(self, document_id):
+        """Last saved analysis for one document, so selecting it restores the
+        answer instead of showing an empty pane."""
+        entry = documents.latest_analysis(document_id)
+        return entry if entry else {}
 
     def compare_documents(self, first_id, second_id):
         first = documents.context(first_id)
@@ -306,8 +328,12 @@ class JsApi:
         if result.get('error'):
             return {'answer': f'文件 LLM 無法回答：{result["error"]}', 'sources': sources,
                     'coverage': {'first': first_coverage, 'second': second_coverage}}
-        return {'answer': result['content'], 'sources': sources,
-                'coverage': {'first': first_coverage, 'second': second_coverage}, 'company_llm_used': True}
+        # Saved against the document the user has selected, which is where the
+        # documents tab will look for it again.
+        return _remember(first_id, 'compare', '比較文件', {
+            'answer': result['content'], 'sources': sources,
+            'coverage': {'first': first_coverage, 'second': second_coverage},
+            'company_llm_used': True})
 
     def start_document_meeting_pack(self, document_id, translate=False):
         run = workflows.create_document_meeting_pack(document_id, bool(translate))
@@ -578,6 +604,7 @@ _GATED_METHODS = {
     'remove_document': 'documents',
     'query_document': 'documents',
     'document_action': 'documents',
+    'latest_document_analysis': 'documents',
     'compare_documents': 'documents.compare',
     'start_document_meeting_pack': 'documents.meeting_pack',
     'get_workflow_run': 'documents.meeting_pack',

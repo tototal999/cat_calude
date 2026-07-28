@@ -30,8 +30,9 @@
   | `python-docx` | DOCX 解析 |
   | `pypdf` | PDF 解析與頁碼定位 |
 
-  選用：`markitdown`（文件轉 Markdown，未安裝時退回原生解析）。
   **不需要 `pandas`／`numpy`**——v6.1 起 Excel 已改用 `openpyxl`／`xlrd`，打包體積因此縮減。
+  同理不使用 `markitdown`：它硬相依 `magika`，會帶進 `onnxruntime` 與 `numpy`（約 113 MB），
+  而其輸出是無頁碼／投影片編號的扁平 Markdown，無法支撐本專案的來源定位。
 - 公司內網 Qwen endpoint 設定於 `%LOCALAPPDATA%\ClaudeCat\config.json`；聊天與文件功能不需要 Claude Code、Codex、Ollama 或其登入憑證。
 
 ## 執行

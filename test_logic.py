@@ -668,6 +668,44 @@ class DocumentServiceTests(unittest.TestCase):
                 self.assertEqual(answer['sources'][0]['source']['line_start'], 2)
                 self.assertEqual(answer['sources'][0]['source']['heading'], '付款條款')
 
+    def test_saved_analysis_survives_and_is_capped(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / '採購.md'
+            source.write_text('# 付款條款\n付款期限為收貨後 30 日。\n', encoding='utf-8')
+            with patch.object(documents, 'DOCUMENTS_DIR', root / 'documents'):
+                document_id = documents.ingest(str(source))['document']['id']
+                self.assertIsNone(documents.latest_analysis(document_id))
+
+                documents.save_analysis(document_id, 'summary', '快速摘要（抽樣）', {
+                    'answer': '重點一', 'sources': [{'source': {'locator': '第 2 行'}}],
+                    'coverage': {'complete': True}})
+                entry = documents.latest_analysis(document_id)
+                self.assertEqual(entry['answer'], '重點一')
+                self.assertEqual(entry['label'], '快速摘要（抽樣）')
+                self.assertEqual(entry['sources'][0]['source']['locator'], '第 2 行')
+
+                # Listing must not treat the analyses directory as a document.
+                self.assertEqual([d['id'] for d in documents.list_documents()], [document_id])
+
+                for index in range(documents.MAX_ANALYSES_PER_DOCUMENT + 5):
+                    documents.save_analysis(document_id, 'sop', '流程 / SOP',
+                                            {'answer': f'第 {index} 次'})
+                saved = documents.load_analyses(document_id)
+                self.assertEqual(len(saved), documents.MAX_ANALYSES_PER_DOCUMENT)
+                self.assertEqual(saved[-1]['answer'], '第 24 次')
+
+                documents.remove(document_id)
+                self.assertEqual(documents.load_analyses(document_id), [])
+
+    def test_failed_analysis_is_not_saved_as_a_stale_answer(self):
+        from backend.routes import api as api_module
+        with patch.object(documents, 'save_analysis') as save:
+            returned = api_module._remember('any-id', 'summary', '快速摘要（抽樣）',
+                                            {'error': '文件 LLM 無法回答：timeout'})
+        save.assert_not_called()
+        self.assertEqual(returned['error'], '文件 LLM 無法回答：timeout')
+
     def test_missing_evidence_does_not_invent_an_answer(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

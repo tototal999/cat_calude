@@ -37,7 +37,7 @@
 - [x] P6-0. 單擊桌面貓開啟貼身的快速提問泡泡；不開完整聊天視窗，Enter 後以執行期設定的 OpenAI-compatible LLM 回答。（2026-07-18）
 
 - [x] P6-1. 建立「聊聊天」與「拖文件給我」兩個入口，拖檔後開啟文件工作區。（2026-07-18：pywebview 文件頁與桌寵右鍵入口）
-- [o] P6-2. 已在文件索引中整合本機 MarkItDown 轉 Markdown；仍待將 Python runtime／sidecar 隨公司離線安裝包封裝，並由主程式以 `127.0.0.1` 生命週期管理。（2026-07-18）
+- [-] P6-2. ~~本機 MarkItDown 轉 Markdown + sidecar 封裝~~ 已放棄（2026-07-28）。原本只把輸出寫進索引的 `markdown` 欄位，全專案無任何消費端，打包版也未含此套件，等於每次 ingest 空轉；已移除 `_to_markdown()` 與該欄位。不採用的原因：`magika` 是硬相依，會帶進 `onnxruntime`／`numpy` 約 113 MB（與「不帶入 pandas／numpy」的既有決定衝突），且其扁平 Markdown 沒有頁碼／投影片編號／儲存格範圍，無法支撐 P6-4 的來源定位。日後若要重啟，走 sidecar 而非打包，且僅用於現有原生擷取器不支援的格式（.msg／.html／.epub／圖片）與掃描型 PDF。
 - [x] P6-3. 支援 PDF、DOCX、PPTX、XLSX、CSV、Markdown、TXT 轉換，並保留來源 metadata。（2026-07-18：離線原生解析）
 - [x] P6-4. 實作來源定位：PDF 頁碼、Word 標題／段落／表格列、PPT 投影片、Excel 工作表與儲存格範圍及欄標題；不得從 Markdown 猜測 PDF 頁碼。（2026-07-19）
 - [x] P6-5. 本機切塊與檢索：採 CJK 詞組與最低相關分數，只將相關區塊交給執行期設定的 `llm.base_url` 或未來 GGUF／llama.cpp 相容模型。（2026-07-19）
