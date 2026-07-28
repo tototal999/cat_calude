@@ -181,11 +181,16 @@ pyinstaller ClaudeCat.spec --clean -y
 正式發布請改用單一可稽核指令：
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File tools\build-release.ps1 -Version 7.0.0
+powershell -NoProfile -ExecutionPolicy Bypass -File tools\build-release.ps1
 ```
 
+版本號的單一來源是 `cat.py` 的 `__version__`；發布前改那一處即可。`-Version` 是選用的斷言參數，
+與 `__version__` 不一致時會直接中止建置，避免打出「回報版本與程式碼不符」的 EXE。執行中的版本
+可從右鍵選單第一列或 `%LOCALAPPDATA%\ClaudeCat\claudecat.log` 的 `started: version=` 確認。
+
 它會依序執行業務測試、JavaScript 檢查、onedir 打包、公司部署檢查、PDF／Office 文件驗證、
-文件 Workflow 驗證、發布內容掃描與 GUI 啟動煙霧測試。完整過程記錄於 `build\release-logs\`；成功後另產生
+文件 Workflow 驗證、發布內容掃描與 GUI 啟動煙霧測試（煙霧測試不只看 process 是否存活，
+而是等打包版的 Tk 執行緒實際寫出 `started: version=<版本>`，並在 log 出現 `crashed` 時失敗）。完整過程記錄於 `build\release-logs\`；成功後另產生
 `dist\ClaudeCat_release-manifest.json`，記錄政策／部署／EXE 雜湊、停用功能、Git commit 與驗證項目。
 manifest 與建置 log 不放進 `dist\ClaudeCat\`。建置期間產生的 `_baked_*` 原始檔會在結束時清除。
 管理用 BAT／HTML／Python 與原始政策 JSON 都只留在建置端，發布內容掃描發現任一檔案即停止。
