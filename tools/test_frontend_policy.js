@@ -6,7 +6,8 @@ const calls = {
   listDocuments: 0,
   latestWorkflow: 0,
   listModels: 0,
-  documentAction: null
+  documentAction: null,
+  latestAnalysis: null
 };
 const elements = new Map();
 const documentListeners = new Map();
@@ -19,6 +20,12 @@ function element(tagName = 'div') {
     children: [],
     classList: { add() {}, remove() {} },
     appendChild(child) { this.children.push(child); return child; },
+    insertBefore(child, reference) {
+      const at = reference ? this.children.indexOf(reference) : 0;
+      this.children.splice(at < 0 ? 0 : at, 0, child);
+      return child;
+    },
+    get firstChild() { return this.children[0] || null; },
     querySelector() { return element('p'); }
   };
 }
@@ -60,7 +67,15 @@ const context = {
     },
     ingest_document() {
       return Promise.resolve({
-        document: { id: 'deck-id', name: 'deck.pptx', suffix: '.pptx' }
+        document: { id: 'deck-id', name: 'deck.pptx', suffix: '.pptx' },
+        reused: true
+      });
+    },
+    latest_document_analysis(documentId) {
+      calls.latestAnalysis = documentId;
+      return Promise.resolve({
+        kind: 'summary', label: '快速摘要（抽樣）', saved_at: '2026-07-28T10:16:14',
+        answer: 'Saved summary', sources: [], coverage: {}
       });
     },
     document_action(documentId, action) {
@@ -89,7 +104,7 @@ async function run() {
     /onclick="runDocumentAction\('summary'\)">快速摘要（抽樣）<\/button>/);
   assert.match(
     indexHtml,
-    /onclick="runDocumentAction\('full_summary'\)">完整分析（全部投影片）<\/button>/);
+    /onclick="runDocumentAction\('full_summary'\)">完整分析（不抽樣）<\/button>/);
 
   // Drag-and-drop must stay cancelled: an unhandled drop navigates the window
   // to file:/// and request_open() never reloads the page, so the UI would be
@@ -126,10 +141,19 @@ async function run() {
 
   context.chooseDocument();
   await new Promise(resolve => setImmediate(resolve));
+  await new Promise(resolve => setImmediate(resolve));
+  // Re-picking an already indexed file must restore its saved analysis rather
+  // than showing an empty pane - the bug that made results look lost.
+  assert.strictEqual(calls.latestAnalysis, 'deck-id');
+  assert.match(document.getElementById('document-status').textContent, /沿用既有結果/);
+  const restored = document.getElementById('document-answer')
+    .children.map(child => child.textContent || '').join('\n');
+  assert.match(restored, /上次的「快速摘要（抽樣）」/);
+
   context.runDocumentAction('full_summary');
   assert.match(
     document.getElementById('document-answer').textContent,
-    /全部投影片/);
+    /全部內容/);
   await new Promise(resolve => setImmediate(resolve));
   assert.deepStrictEqual(calls.documentAction, {
     documentId: 'deck-id',

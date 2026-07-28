@@ -209,9 +209,10 @@ def clear_history() -> dict[str, Any]:
 
 
 def create_document_meeting_pack(document_id: str, translate: bool = False) -> dict[str, Any]:
-    try:
-        document_id = str(uuid.UUID(document_id))
-    except (ValueError, AttributeError):
+    # Document ids are timestamps since 7.2.3 (uuid4 before that); the document
+    # service owns that format, so borrow its validator instead of assuming one.
+    document_id = documents.safe_document_id(document_id)
+    if document_id is None:
         return {'error': '無效的文件識別碼。'}
     steps = [
         {'id': step, 'status': 'pending', 'attempts': 0}

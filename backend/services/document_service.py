@@ -6,6 +6,7 @@ preserve PDF pages, Word paragraphs, PowerPoint slides, and Excel ranges.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import re
@@ -21,6 +22,7 @@ DOCUMENTS_DIR = settings.LOG_DIR / 'documents'
 MAX_ANALYSES_PER_DOCUMENT = 20
 _SUPPORTED_SUFFIXES = {'.txt', '.md', '.csv', '.pdf', '.docx', '.pptx', '.xlsx'}
 _TOKEN = re.compile(r"[A-Za-z0-9_]+|[\u4e00-\u9fff]+", re.UNICODE)
+_DOCUMENT_ID_RE = re.compile(r'^\d{14}(?:_\d+)?$')
 _CJK_FUNCTION_CHARS = set('的是了在有和與及或為可可以請幾多少嗎呢吧啊')
 
 
@@ -234,26 +236,101 @@ def ingest(path_value: str) -> dict:
         return {'error': '文件沒有可建立索引的文字內容。'}
 
     _ensure_dir()
-    document_id = str(uuid.uuid4())
+    digest = _file_digest(path)
+    existing = _find_by_digest(digest)
+    if existing is not None:
+        # Same bytes: reuse the index so saved analyses stay reachable. Picking
+        # the same file twice used to mint a second id, leaving two rows with
+        # an identical label and the analyses attached to only one of them.
+        if existing['name'] != path.name:
+            existing['name'] = path.name   # renamed on disk; show the current name
+            _write_index(existing)
+        return {'document': _summary(existing), 'reused': True}
+
+    document_id = _new_document_id()
     document = {
         'id': document_id,
         'name': path.name,
         'suffix': suffix,
+        'digest': digest,
+        'indexed_at': datetime.now().isoformat(timespec='seconds'),
         'chunks': chunks,
     }
-    _index_path(document_id).write_text(json.dumps(document, ensure_ascii=False), encoding='utf-8')
-    return {'document': _summary(document)}
+    _write_index(document)
+    return {'document': _summary(document), 'reused': False}
 
 
-def _load(document_id: str) -> dict | None:
+def _write_index(document: dict) -> None:
+    _index_path(document['id']).write_text(
+        json.dumps(document, ensure_ascii=False), encoding='utf-8')
+
+
+def _file_digest(path: Path) -> str:
+    digest = hashlib.sha256()
+    with open(path, 'rb') as handle:
+        for block in iter(lambda: handle.read(1 << 20), b''):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def _find_by_digest(digest: str) -> dict | None:
+    for path in DOCUMENTS_DIR.glob('*.json'):
+        try:
+            document = json.loads(path.read_text(encoding='utf-8'))
+        except (OSError, ValueError):
+            continue
+        if isinstance(document, dict) and document.get('digest') == digest:
+            return document
+    return None
+
+
+def _new_document_id() -> str:
+    """YYYYMMDDHHMMSS, so the id itself says when the document was indexed.
+
+    Hours are part of the key on purpose: minute+second alone would collide
+    across the same clock minute of different hours.
+    """
+    base = datetime.now().strftime('%Y%m%d%H%M%S')
+    candidate, ordinal = base, 0
+    while _index_path(candidate).exists():   # two files indexed within one second
+        ordinal += 1
+        candidate = f'{base}_{ordinal}'
+    return candidate
+
+
+def safe_document_id(document_id: str) -> str | None:
+    """Reject anything that could escape DOCUMENTS_DIR.
+
+    Accepts both the timestamp keys minted now and the uuid4 keys that indexes
+    created before 7.2.3 still carry, so existing documents keep working.
+    """
+    text = str(document_id)
+    if _DOCUMENT_ID_RE.match(text):
+        return text
     try:
-        return json.loads(_index_path(str(uuid.UUID(document_id))).read_text(encoding='utf-8'))
-    except (OSError, ValueError, json.JSONDecodeError):
+        return str(uuid.UUID(text))
+    except ValueError:
         return None
 
 
-def _summary(document: dict) -> dict:
-    return {'id': document['id'], 'name': document['name'], 'chunk_count': len(document['chunks'])}
+def _load(document_id: str) -> dict | None:
+    key = safe_document_id(document_id)
+    if key is None:
+        return None
+    try:
+        return json.loads(_index_path(key).read_text(encoding='utf-8'))
+    except (OSError, ValueError):
+        return None
+
+
+def _summary(document: dict, indexed_at: str = '') -> dict:
+    return {
+        'id': document['id'],
+        'name': document['name'],
+        'chunk_count': len(document['chunks']),
+        # Shown in the list so same-named indexes stay distinguishable.
+        'indexed_at': document.get('indexed_at') or indexed_at,
+    }
 
 
 def list_documents() -> list[dict]:
@@ -261,16 +338,19 @@ def list_documents() -> list[dict]:
     result = []
     for path in DOCUMENTS_DIR.glob('*.json'):
         try:
-            result.append(_summary(json.loads(path.read_text(encoding='utf-8'))))
-        except (OSError, json.JSONDecodeError, KeyError):
+            document = json.loads(path.read_text(encoding='utf-8'))
+            # Indexes written before 7.2.3 have no indexed_at; the file's own
+            # mtime is close enough to tell two same-named rows apart.
+            fallback = datetime.fromtimestamp(path.stat().st_mtime).isoformat(timespec='seconds')
+            result.append(_summary(document, fallback))
+        except (OSError, ValueError, KeyError):
             continue
-    return sorted(result, key=lambda item: item['name'].lower())
+    return sorted(result, key=lambda item: (item['name'].lower(), item['indexed_at']))
 
 
 def remove(document_id: str) -> dict:
-    try:
-        key = str(uuid.UUID(document_id))
-    except ValueError:
+    key = safe_document_id(document_id)
+    if key is None:
         return {'error': '無效的文件識別碼。'}
     _index_path(key).unlink(missing_ok=True)
     # Removing the index must take the saved analyses with it, or they linger
@@ -291,9 +371,8 @@ def _analyses_path(document_id: str) -> Path:
 
 def load_analyses(document_id: str) -> list[dict]:
     """Saved analyses for one document, oldest first; [] when there are none."""
-    try:
-        key = str(uuid.UUID(document_id))
-    except ValueError:
+    key = safe_document_id(document_id)
+    if key is None:
         return []
     try:
         data = json.loads(_analyses_path(key).read_text(encoding='utf-8'))
@@ -313,9 +392,8 @@ def save_analysis(document_id: str, kind: str, label: str, result: dict) -> None
     Stored beside the index rather than inside it: re-ingesting a document
     rewrites the index, and past analyses should outlive that.
     """
-    try:
-        key = str(uuid.UUID(document_id))
-    except ValueError:
+    key = safe_document_id(document_id)
+    if key is None:
         return
     entries = load_analyses(key)
     entries.append({
@@ -394,7 +472,8 @@ def context(document_id: str, limit: int | None = 12) -> dict:
             'included_chunks': len(sources),
             'total_chunks': len(chunks),
             'complete': len(sources) == len(chunks),
-            'unit': '張投影片' if document.get('suffix') == '.pptx' else '個文件區塊',
+            'unit': {'.pptx': '張投影片', '.pdf': '頁'}.get(
+                document.get('suffix'), '個文件區塊'),
             'limited_chunks': sum(
                 1 for chunk in chunks
                 if chunk['source'].get('text_extracted') is False),

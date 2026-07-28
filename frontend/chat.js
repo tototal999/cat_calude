@@ -61,11 +61,15 @@ function chooseDocument() {
     if (!path) return;
     document.getElementById('document-status').textContent = '正在建立本機索引…';
     pywebview.api.ingest_document(path).then(result => {
-      document.getElementById('document-status').textContent = result.error || '已完成分析';
+      document.getElementById('document-status').textContent = result.error
+        || (result.reused ? '這份文件已建過索引，沿用既有結果' : '已完成分析');
       if (result.document) {
         _currentDocumentId = result.document.id;
         document.getElementById('document-question-box').style.display = '';
         document.getElementById('document-actions').style.display = '';
+        // A reused index can already have analyses; a brand new one cannot,
+        // and restoreLatestAnalysis just clears the pane in that case.
+        restoreLatestAnalysis(result.document.id);
       }
       loadDocuments();
     });
@@ -87,7 +91,8 @@ function loadDocuments() {
       }
       const row = document.createElement('div');
       row.className = 'document-row' + (doc.id === _currentDocumentId ? ' active' : '');
-      row.innerHTML = `<button class="document-select">📄 ${escapeHtml(doc.name)} <small>${doc.chunk_count} 個區塊</small></button><button class="document-remove" title="只移除本機索引">×</button>`;
+      const indexedAt = doc.indexed_at ? ` · ${escapeHtml(doc.indexed_at.replace('T', ' '))}` : '';
+      row.innerHTML = `<button class="document-select">📄 ${escapeHtml(doc.name)} <small>${doc.chunk_count} 個區塊${indexedAt}</small></button><button class="document-remove" title="只移除本機索引">×</button>`;
       row.querySelector('.document-select').onclick = () => {
         _currentDocumentId = doc.id;
         document.getElementById('document-question-box').style.display = '';
@@ -122,7 +127,7 @@ function runDocumentAction(action) {
   if (!_currentDocumentId) return;
   const answer = document.getElementById('document-answer');
   answer.textContent = action === 'full_summary'
-    ? '正在分批分析全部投影片，請稍候…'
+    ? '正在分批分析全部內容，請稍候…'
     : '正在依文件來源整理…';
   pywebview.api.document_action(_currentDocumentId, action).then(renderDocumentResult);
 }

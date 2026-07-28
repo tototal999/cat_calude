@@ -18,7 +18,9 @@ import backend.window_main as wm
 
 logger = logging.getLogger('claudecat')
 
-FULL_PRESENTATION_BATCH_SIZE = 6
+FULL_ANALYSIS_BATCH_SIZE = 6
+# 40 batches x 6 = 240 slides/pages before the result is reported as partial.
+FULL_ANALYSIS_MAX_BATCHES = 40
 
 
 def _remember(document_id, kind, label, result):
@@ -33,22 +35,32 @@ def _remember(document_id, kind, label, result):
     return result
 
 
+# Batch unit per source kind. Word paragraphs and Excel rows are deliberately
+# absent: their chunks are far finer-grained, so a single document would fan out
+# into hundreds of LLM calls.
+_FULL_ANALYSIS_UNITS = {'powerpoint_slide': '投影片', 'pdf_page': '頁'}
+
+
 def _full_presentation_summary(document_id):
     evidence = documents.context(document_id, limit=None)
     if evidence.get('error'):
         return evidence
     sources = evidence['sources']
-    if not sources or any(
-            item['source'].get('kind') != 'powerpoint_slide'
-            for item in sources):
-        return {'error': '完整分析目前僅支援 PPTX。'}
+    kinds = {item['source'].get('kind') for item in sources}
+    if not sources or not kinds <= set(_FULL_ANALYSIS_UNITS):
+        return {'error': '完整分析目前僅支援 PPTX 與 PDF。'}
+    unit = _FULL_ANALYSIS_UNITS[next(iter(kinds))]
+
+    # A long document would otherwise fire dozens of calls with no warning.
+    # Stop at the cap and let the existing coverage note say so honestly.
+    capped = sources[:FULL_ANALYSIS_BATCH_SIZE * FULL_ANALYSIS_MAX_BATCHES]
 
     model = llm.model_for_task('document', wm._current_model)
     batch_summaries = []
     processed = 0
-    total_batches = (len(sources) + FULL_PRESENTATION_BATCH_SIZE - 1) // FULL_PRESENTATION_BATCH_SIZE
-    for offset in range(0, len(sources), FULL_PRESENTATION_BATCH_SIZE):
-        batch = sources[offset:offset + FULL_PRESENTATION_BATCH_SIZE]
+    total_batches = (len(capped) + FULL_ANALYSIS_BATCH_SIZE - 1) // FULL_ANALYSIS_BATCH_SIZE
+    for offset in range(0, len(capped), FULL_ANALYSIS_BATCH_SIZE):
+        batch = capped[offset:offset + FULL_ANALYSIS_BATCH_SIZE]
         batch_number = len(batch_summaries) + 1
         source_text = '\n\n'.join(
             f'[{item["source"]["document_name"]} · {item["source"].get("locator", "未知位置")}]\n'
@@ -56,8 +68,8 @@ def _full_presentation_summary(document_id):
             for item in batch)
         result = llm.chat([
             {'role': 'system', 'content': (
-                '你是公司文件助手。請逐張整理提供的投影片文字，只能使用來源內容，'
-                '保留投影片編號、關鍵事實與待確認事項，不可補充外部知識。')},
+                f'你是公司文件助手。請逐{unit}整理提供的文件文字，只能使用來源內容，'
+                f'保留{unit}編號、關鍵事實與待確認事項，不可補充外部知識。')},
             {'role': 'user', 'content': (
                 f'這是完整分析的第 {batch_number}/{total_batches} 批。\n\n{source_text}')},
         ], model=model, timeout=180)
@@ -81,26 +93,32 @@ def _full_presentation_summary(document_id):
         for index, summary in enumerate(batch_summaries, start=1))
     final = llm.chat([
         {'role': 'system', 'content': (
-            '你是公司文件助手。請將所有批次摘要整合成一份完整簡報分析，'
+            '你是公司文件助手。請將所有批次摘要整合成一份完整文件分析，'
             '涵蓋主題、重點、決策、風險與後續行動；不可省略批次或補充外部知識。')},
         {'role': 'user', 'content': summaries_text},
     ], model=model, timeout=180)
     if final.get('error'):
         coverage = dict(evidence.get('coverage', {}))
         coverage.update({
-            'included_chunks': len(sources),
+            'included_chunks': len(capped),
             'total_chunks': len(sources),
             'complete': False,
         })
         return {
             'error': f'完整分析未完成：最終彙整失敗：{final["error"]}',
-            'sources': sources,
+            'sources': capped,
             'coverage': coverage,
         }
+    coverage = dict(evidence['coverage'])
+    coverage.update({
+        'included_chunks': len(capped),
+        'total_chunks': len(sources),
+        'complete': len(capped) == len(sources),
+    })
     return {
         'answer': final['content'],
-        'sources': sources,
-        'coverage': evidence['coverage'],
+        'sources': capped,
+        'coverage': coverage,
         'company_llm_used': True,
     }
 
@@ -263,11 +281,11 @@ class JsApi:
 
     def document_action(self, document_id, action):
         if action == 'full_summary':
-            return _remember(document_id, 'full_summary', '完整分析（全部投影片）',
+            return _remember(document_id, 'full_summary', '完整分析（不抽樣）',
                              _full_presentation_summary(document_id))
         actions = {
-            'summary': '以條列方式摘要這份文件的重點、適用對象與注意事項。',
-            'sop': '整理這份文件中明確描述的流程或 SOP，按順序列出；未描述的步驟不可補充。',
+            'summary': ('以條列方式摘要這份文件的重點、適用對象與注意事項；'
+                        '文件未描述的項目請明確說明沒有，不可推測補齊。'),
             'table': '將文件中可比較的重複資訊整理成 Markdown 表格；若來源不足以形成表格，請明確說明。',
         }
         instruction = actions.get(action)
@@ -292,7 +310,7 @@ class JsApi:
         ], model=llm.model_for_task('document', wm._current_model), timeout=180)
         if result.get('error'):
             return {'answer': f'文件 LLM 無法回答：{result["error"]}', 'sources': evidence['sources'], 'coverage': coverage}
-        labels = {'summary': '快速摘要（抽樣）', 'sop': '流程 / SOP', 'table': '整理表格'}
+        labels = {'summary': '快速摘要（抽樣）', 'table': '整理表格'}
         return _remember(document_id, action, labels[action], {
             'answer': result['content'], 'sources': evidence['sources'],
             'coverage': coverage, 'company_llm_used': True})
