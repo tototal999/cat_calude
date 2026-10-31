@@ -14,3 +14,9 @@ my_session.md
 in_progress.md
 todo.md
 AGENTS.md
+# 根目錄暫存腳本、其他專案工作檔與本機稽核報告
+/_*
+/ERPLLM_*.zip
+/.erpllm_*
+/tmp_*.py
+/OSS_*.md
