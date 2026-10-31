@@ -10,7 +10,7 @@ Credentials used only in HTTP Authorization headers.
 
 Derived from usage-monitor-for-claude
 (https://github.com/jens-duttke/usage-monitor-for-claude).
-Copyright (c) 2026 Jens Duttke. MIT License; see LICENSE.
+Copyright (c) 2026 Jens Duttke. MIT License; see THIRD_PARTY_NOTICES.md.
 """
 from __future__ import annotations
 
