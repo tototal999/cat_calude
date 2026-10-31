@@ -3,9 +3,11 @@ import io
 import gc
 import importlib
 import logging
+import os
 import tempfile
 import threading
 import unittest
+import uuid
 from contextlib import redirect_stdout
 from datetime import datetime, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -1189,6 +1191,25 @@ class WorkflowTests(unittest.TestCase):
                 workflows._write_run(retried)
                 blocked = workflows.retry_run(retried['run_id'])
                 self.assertIn('重新執行上限', blocked['error'])
+
+    def test_latest_run_prefers_newer_run_when_mtimes_tie(self):
+        # The older run id sorts first, so a tie must not fall back to file order.
+        run_ids = iter([uuid.UUID(int=1), uuid.UUID(int=2)])
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            runs_patch, artifacts_patch = self._directories(root)
+            with runs_patch, artifacts_patch, \
+                 patch.object(workflows.uuid, 'uuid4', side_effect=lambda: next(run_ids)):
+                older = workflows.create_document_meeting_pack(self.DOCUMENT_ID)
+                newer = workflows.create_document_meeting_pack(self.DOCUMENT_ID)
+            with runs_patch, artifacts_patch:
+                older['created_at'] = '2026-01-01T00:00:00+00:00'
+                newer['created_at'] = '2026-01-01T00:00:01+00:00'
+                for run in (older, newer):
+                    workflows._write_run(run)
+                    os.utime(workflows._run_path(run['run_id']), ns=(10**18, 10**18))
+
+                self.assertEqual(workflows.latest_run()['run_id'], newer['run_id'])
 
     def test_completed_workflow_cannot_be_retried(self):
         with tempfile.TemporaryDirectory() as directory:

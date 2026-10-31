@@ -172,7 +172,7 @@ def _clear_log_files(log: logging.Logger, log_file: Path) -> None:
     rotating_handler = next(
         (handler for handler in log.handlers
          if isinstance(handler, logging.handlers.RotatingFileHandler)
-         and Path(handler.baseFilename) == log_file.resolve()),
+         and Path(handler.baseFilename).resolve() == log_file.resolve()),
         None,
     )
     if rotating_handler is None:

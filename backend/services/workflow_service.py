@@ -91,13 +91,17 @@ def latest_run() -> dict[str, Any]:
     with _LOCK:
         _recover_stale_runs_unlocked()
         try:
-            paths = sorted(RUNS_DIR.glob('*.json'), key=lambda path: path.stat().st_mtime, reverse=True)
+            paths = [(path.stat().st_mtime, path) for path in RUNS_DIR.glob('*.json')]
         except OSError:
             return {'error': '無法讀取 Workflow 執行紀錄。'}
-        for path in paths:
+        # Files written back to back can share an mtime; created_at breaks the tie.
+        candidates = []
+        for mtime, path in paths:
             run = get_run(path.stem)
             if not run.get('error'):
-                return run
+                candidates.append((mtime, run.get('created_at', ''), run))
+        if candidates:
+            return max(candidates, key=lambda item: item[:2])[2]
         return {'error': '尚無有效的 Workflow 執行紀錄。' if paths else '尚無 Workflow 執行紀錄。'}
 
 
