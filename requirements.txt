@@ -1,0 +1,11 @@
+requests==2.32.5
+Pillow==12.1.0
+pywebview==6.2.1
+pystray==0.19.5
+openpyxl==3.1.5
+xlrd==2.0.2
+python-pptx==1.0.2
+python-docx==1.2.0
+pypdf==6.21.4
+# test_logic.py only
+reportlab==5.1.0

@@ -16,7 +16,7 @@
 - 必要套件：
 
   ```bash
-  pip install requests Pillow pywebview pystray openpyxl xlrd python-pptx python-docx pypdf
+  pip install -r requirements.txt
   ```
 
   | 套件 | 用途 |
