@@ -32,7 +32,7 @@ claude-cat/
 │              #   半透明邊緣像素，實測會留下洋紅毛邊）
 ├── vectorcat.py # 純 stdlib：GDI+ 向量貓，跑步循環參數化生成（8 幀 + 站立幀）
 │              # （2026-07-16 取代點陣素材：可任意調 CAT_SIZE/CAT_COLOR 不失真）
-└── frames/    # RunCat365 素材 (Apache-2.0)——已停用，保留備援；
+└── frames/    # bluecat PNG 幀（RunCat365 素材已於 2026-10-31 移除）；
                # winalpha.load_rgba/to_premultiplied_bgra 亦僅供 PNG 備援路徑使用
 ```
 

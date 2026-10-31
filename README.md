@@ -281,3 +281,12 @@ node tools\gen-illustrations.js     # 已存在的圖會跳過，不重複計費
   }
 }
 ```
+
+## 素材來源
+
+| 路徑 | 來源 |
+|---|---|
+| `skins/bluecat/`、`frames/bluecat01.png`～`bluecat06.png` | 專案作者自製 |
+| `skins/cowcat/` | 專案作者自製 |
+| `skins/ragdollcat/` | 以 OpenAI Codex 生成 |
+| `skins/wuma/` | 以 OpenAI Codex 生成 |
