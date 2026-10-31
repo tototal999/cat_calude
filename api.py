@@ -7,6 +7,10 @@ Anthropic API.  This is the only module that handles credentials.
 
 Network communication exclusively with ``api.anthropic.com``.
 Credentials used only in HTTP Authorization headers.
+
+Derived from usage-monitor-for-claude
+(https://github.com/jens-duttke/usage-monitor-for-claude).
+Copyright (c) 2026 Jens Duttke. MIT License; see LICENSE.
 """
 from __future__ import annotations
 
