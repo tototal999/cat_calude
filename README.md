@@ -1,5 +1,15 @@
 # ClaudeCat
 
+**English summary**
+
+ClaudeCat is a Windows desktop pet built with Python and Tkinter. It can show your Claude Code and Codex usage limits, and it opens a chat and local document assistant that talks to any OpenAI-compatible endpoint you configure. Documents and their index stay on your computer; only the matched excerpts go to the endpoint.
+
+- Install: Windows 10/11 and Python 3.11 (tested in CI), then `pip install -r requirements.txt`.
+- Run: `python cat.py`. The LLM endpoint is set in `%LOCALAPPDATA%\ClaudeCat\config.json` (`llm.base_url`).
+- Test: `python -m unittest test_logic`.
+- Usage limits are optional and off by default. Claude usage is read from `api.anthropic.com/api/oauth/usage` with the local Claude Code credentials. This endpoint is not a documented public API and can change or stop working at any time.
+- License: MIT. Third-party notices are in `THIRD_PARTY_NOTICES.md`.
+
 > v6.1 已將產品定位擴充為「桌面寵物 + 本機文件助手」：文件與索引均留在本機；Claude／Codex limits 為獨立可選監控。完整 MVP 規格見 [local-document-assistant-mvp.md](local-document-assistant-mvp.md)。
 > v6.2 再擴充為「桌面 AI 工具箱」，加入 JSON 工具與翻譯分頁，規格見 [desktop-ai-toolbox-mvp.md](desktop-ai-toolbox-mvp.md)。
 > v7 將桌寵定位為 Workflow Launcher，逐步演進為 Local-first「企業 AI 工作台」；第一性原理分析見 [enterprise-ai-workbench-first-principles.md](enterprise-ai-workbench-first-principles.md)。首條「文件會議包」Workflow 已完成自動驗證，目前公司政策暫時隱藏入口。
@@ -271,6 +281,7 @@ node tools\gen-illustrations.js     # 已存在的圖會跳過，不重複計費
 - 聊天訊息、對話標題與排程內容會先轉義再顯示，避免 HTML 被執行。
 - 對話 session 僅接受 UUID，避免透過路徑名稱存取 sessions 目錄外的檔案。
 - 開發環境的附件與 PPT 轉換會直接啟動 `worker.py`，不再載入完整的桌面程式。
+- Claude 用量讀取 `api.anthropic.com/api/oauth/usage`，這不是 Anthropic 公開文件記載的 API，可能隨時變更或失效。
 - 附件預設限制為 10 MiB 與 50,000 個字元（聊天附件目前由公司政策停用，設定仍保留）；可在 `%LOCALAPPDATA%\\ClaudeCat\\config.json` 的 `llm` 區塊設定：
 
 ```json
